@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "BeHeld",
+  "version": "0.1.0",
+  "description": "Hold what matters. Let go of the rest.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "clipboardRead",
+    "clipboardWrite"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "BeHeld"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/index.js"]
+    }
+  ]
+}
