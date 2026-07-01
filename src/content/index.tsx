@@ -5,6 +5,51 @@ import { createRoot } from "react-dom/client";
 type StripState = "prompt" | "folders" | "dismissed";
 
 // ── STRIP COMPONENT ────────────────────────────────────────
+// async function saveScreenshot(folderName: string, dataUrl: string): Promise<boolean> {
+//   try {
+//     const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
+//     if (!rootHandle) {
+//       console.error("BeHeld: no root handle found");
+//       return false;
+//     }
+
+//     const permission = await (rootHandle as unknown as {
+//       requestPermission: (desc: { mode: string }) => Promise<string>;
+//     }).requestPermission({ mode: "readwrite" });
+
+//     if (permission !== "granted") {
+//       console.error("BeHeld: permission denied");
+//       return false;
+//     }
+
+//     const folderHandle = await rootHandle.getDirectoryHandle(folderName, { create: true });
+
+//     const timestamp = new Date()
+//       .toISOString()
+//       .replace(/[:.]/g, "-")
+//       .slice(0, 19);
+//     const filename = `screenshot-${timestamp}.png`;
+
+//     const response = await fetch(dataUrl);
+//     const blob = await response.blob();
+
+//     const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+//     const writable = await fileHandle.createWritable();
+//     await writable.write(blob);
+//     await writable.close();
+
+//     const folders = await get<string[]>("beheld-folders") ?? ["Temp"];
+//     if (!folders.includes(folderName)) {
+//       await set("beheld-folders", [...folders, folderName]);
+//     }
+
+//     return true;
+//   } catch (error) {
+//     console.error("BeHeld save error:", error);
+//     return false;
+//   }
+// }
+
 function DecisionStrip({ dataUrl }: { dataUrl: string }) {
   const [state, setState] = useState<StripState>("prompt");
   const [visible, setVisible] = useState(true);
@@ -96,12 +141,20 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
           <div style={{ fontSize: "11px", color: "#5a7a5a", marginBottom: "4px" }}>
             Where should this go?
           </div>
+
           {["Work", "School"].map((folder) => (
             <button
               key={folder}
               onClick={() => {
-                console.log(`Saving to ${folder}`);
-                setVisible(false);
+                chrome.runtime.sendMessage(
+                  { type: "SAVE_SCREENSHOT", folderName: folder, dataUrl },
+                  (response) => {
+                    if (response?.success) {
+                      console.log(`Saved to ${folder}`);
+                      setVisible(false);
+                    }
+                  }
+                );
               }}
               style={{
                 background: "#2d4a2d",
@@ -117,10 +170,18 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
               📁 {folder}
             </button>
           ))}
+
           <button
             onClick={() => {
-              console.log("Saving to Temp");
-              setVisible(false);
+              chrome.runtime.sendMessage(
+                { type: "SAVE_SCREENSHOT", folderName: "Temp", dataUrl },
+                (response) => {
+                  if (response?.success) {
+                    console.log("Saved to Temp");
+                    setVisible(false);
+                  }
+                }
+              );
             }}
             style={{
               background: "#2a2008",
@@ -135,6 +196,7 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
           >
             📁 Temp
           </button>
+
           <button
             onClick={() => setVisible(false)}
             style={{

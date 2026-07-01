@@ -9,20 +9,21 @@
     "storage",
     "scripting",
     "clipboardRead",
-    "clipboardWrite"
+    "clipboardWrite",
+    "offscreen"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
+    "default_popup": "src/popup/popup.html",
     "default_title": "BeHeld"
   },
   "background": {
-    "service_worker": "background/service-worker.js",
+    "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/index.js"]
+      "js": ["src/content/index.js"]
     }
   ]
 }
