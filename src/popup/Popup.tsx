@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { get, set } from "idb-keyval";
-// import Onboarding from "./Onboarding";
 
 function Popup() {
   const [isReady, setIsReady] = useState<boolean | null>(null);
