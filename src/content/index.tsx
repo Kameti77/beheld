@@ -1,16 +1,18 @@
 import { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
+
 // ── TYPES ──────────────────────────────────────────────────
 type StripState = "prompt" | "folders" | "dismissed";
 
 // ── STRIP COMPONENT ────────────────────────────────────────
-function DecisionStrip({ dataUrl }: { dataUrl: string }) {
+function DecisionStrip({ dataUrl, folders }: { dataUrl: string; folders: string[] }) {
   const [state, setState] = useState<StripState>("prompt");
   const [visible, setVisible] = useState(true);
   const [fading, setFading] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
-  // Stage 1: collapse prompt after 4 seconds
   useEffect(() => {
     const timer1 = setTimeout(() => {
       if (state === "prompt") setState("dismissed");
@@ -18,7 +20,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
     return () => clearTimeout(timer1);
   }, [state]);
 
-  // Stage 2: fade out strip after 8 more seconds
   useEffect(() => {
     if (state === "dismissed") {
       const timer2 = setTimeout(() => {
@@ -29,7 +30,11 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
     }
   }, [state]);
 
+  
   if (!visible) return null;
+
+  const regularFolders = folders.filter((f) => f !== "Temp");
+  const hasTemp = folders.includes("Temp");
 
   return (
     <div
@@ -44,7 +49,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
         transition: "opacity 0.6s ease",
       }}
     >
-      {/* Speech bubble — prompt state only */}
       {state === "prompt" && (
         <div
           style={{
@@ -78,7 +82,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
         </div>
       )}
 
-      {/* Folder panel — folders state only */}
       {state === "folders" && (
         <div
           style={{
@@ -86,7 +89,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
             border: "1px solid #2d4a2d",
             borderRadius: "8px 0 0 8px",
             padding: "12px",
-            marginRight: "0",
             display: "flex",
             flexDirection: "column",
             gap: "8px",
@@ -97,7 +99,7 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
             Where should this go?
           </div>
 
-          {["Work", "School"].map((folder) => (
+          {regularFolders.map((folder) => (
             <button
               key={folder}
               onClick={() => {
@@ -105,7 +107,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
                   { type: "SAVE_SCREENSHOT", folderName: folder, dataUrl },
                   (response) => {
                     if (response?.success) {
-                      console.log(`Saved to ${folder}`);
                       setVisible(false);
                     } else {
                       console.error(`BeHeld: failed to save to ${folder}`, chrome.runtime.lastError);
@@ -128,51 +129,109 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
             </button>
           ))}
 
-          <button
-            onClick={() => {
-              chrome.runtime.sendMessage(
-                { type: "SAVE_SCREENSHOT", folderName: "Temp", dataUrl },
-                (response) => {
-                  if (response?.success) {
-                    console.log("Saved to Temp");
-                    setVisible(false);
-                  } else {
-                    console.error("BeHeld: failed to save to Temp", chrome.runtime.lastError);
+          {hasTemp && (
+            <button
+              onClick={() => {
+                chrome.runtime.sendMessage(
+                  { type: "SAVE_SCREENSHOT", folderName: "Temp", dataUrl },
+                  (response) => {
+                    if (response?.success) {
+                      setVisible(false);
+                    } else {
+                      console.error("BeHeld: failed to save to Temp", chrome.runtime.lastError);
+                    }
                   }
-                }
-              );
-            }}
-            style={{
-              background: "#2a2008",
-              border: "1px solid #6a4e0a",
-              borderRadius: "6px",
-              padding: "8px 12px",
-              color: "#F59E0B",
-              fontSize: "13px",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            📁 Temp
-          </button>
+                );
+              }}
+              style={{
+                background: "#2a2008",
+                border: "1px solid #6a4e0a",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                color: "#F59E0B",
+                fontSize: "13px",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              📁 Temp
+            </button>
+          )}
 
-          <button
-            onClick={() => setVisible(false)}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#5a7a5a",
-              fontSize: "12px",
-              cursor: "pointer",
-              marginTop: "4px",
-            }}
-          >
-            Copy to clipboard only
-          </button>
+          {!creatingFolder ? (
+  <button
+    onClick={() => setCreatingFolder(true)}
+    style={{
+      background: "transparent",
+      border: "1px dashed #3a5e3a",
+      borderRadius: "6px",
+      padding: "8px 12px",
+      color: "#4ADE80",
+      fontSize: "13px",
+      cursor: "pointer",
+      textAlign: "left",
+    }}
+  >
+    + New folder
+  </button>
+) : (
+  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+    <input
+      autoFocus
+      type="text"
+      value={newFolderName}
+      onChange={(e) => setNewFolderName(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && newFolderName.trim()) {
+          chrome.runtime.sendMessage(
+            { type: "SAVE_SCREENSHOT", folderName: newFolderName.trim(), dataUrl },
+            (response) => {
+              if (response?.success) {
+                setVisible(false);
+              } else {
+                console.error("BeHeld: failed to save to new folder", chrome.runtime.lastError);
+              }
+            }
+          );
+        }
+        if (e.key === "Escape") {
+          setCreatingFolder(false);
+          setNewFolderName("");
+        }
+      }}
+      placeholder="Folder name..."
+      style={{
+        background: "#1a2e1a",
+        border: "1px solid #4ADE80",
+        borderRadius: "6px",
+        padding: "8px 12px",
+        color: "#c4e8c4",
+        fontSize: "13px",
+        outline: "none",
+      }}
+    />
+    <div style={{ fontSize: "11px", color: "#5a7a5a" }}>
+      Press Enter to save · Esc to cancel
+    </div>
+  </div>
+)}
+
+<button
+  onClick={() => setVisible(false)}
+  style={{
+    background: "transparent",
+    border: "none",
+    color: "#5a7a5a",
+    fontSize: "12px",
+    cursor: "pointer",
+    marginTop: "4px",
+  }}
+>
+  Copy to clipboard only
+</button>
         </div>
       )}
 
-      {/* The vertical strip — always visible */}
       <div
         onClick={() => {
           if (state === "dismissed") setState("prompt");
@@ -189,7 +248,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
           cursor: state === "dismissed" ? "pointer" : "default",
         }}
       >
-        {/* Folder icon */}
         <div
           onClick={(e) => {
             e.stopPropagation();
@@ -206,7 +264,6 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
           📁
         </div>
 
-        {/* Clipboard icon */}
         <div
           onClick={(e) => {
             e.stopPropagation();
@@ -233,7 +290,7 @@ function DecisionStrip({ dataUrl }: { dataUrl: string }) {
 }
 
 // ── MOUNT ──────────────────────────────────────────────────
-function mountStrip(dataUrl: string) {
+function mountStrip(dataUrl: string, folders: string[]) {
   const existing = document.getElementById("beheld-strip-root");
   if (existing) existing.remove();
 
@@ -241,12 +298,14 @@ function mountStrip(dataUrl: string) {
   container.id = "beheld-strip-root";
   document.body.appendChild(container);
 
-  createRoot(container).render(<DecisionStrip dataUrl={dataUrl} />);
+  createRoot(container).render(
+    <DecisionStrip dataUrl={dataUrl} folders={folders} />
+  );
 }
 
 // ── LISTEN FOR MESSAGE FROM SERVICE WORKER ─────────────────
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "SHOW_STRIP") {
-    mountStrip(message.dataUrl);
+    mountStrip(message.dataUrl, message.folders ?? ["Temp"]);
   }
 });

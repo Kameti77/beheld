@@ -2,14 +2,11 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("BeHeld installed and running.");
 });
 
-// Path is relative to the extension root (i.e. the built dist/ folder), which
-// mirrors manifest.json's other entries — NOT relative to this script's location.
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen/offscreen.html";
 
 async function ensureOffscreen() {
   const existing = await chrome.offscreen.hasDocument();
   if (existing) return;
-
   try {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_DOCUMENT_PATH,
@@ -17,9 +14,20 @@ async function ensureOffscreen() {
       justification: "Access IndexedDB to save screenshots via File System Access API",
     });
   } catch (error) {
-    // Ignore races where another SAVE_SCREENSHOT call created the document first.
     if (!(await chrome.offscreen.hasDocument())) throw error;
   }
+}
+
+async function getFolders(): Promise<string[]> {
+  await ensureOffscreen();
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "GET_FOLDERS" },
+      (response) => {
+        resolve(response?.folders ?? ["Temp"]);
+      }
+    );
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -31,26 +39,32 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
 
-      chrome.tabs.captureVisibleTab({ format: "png" }, (dataUrl) => {
+      chrome.tabs.captureVisibleTab({ format: "png" }, async (dataUrl) => {
         if (chrome.runtime.lastError || !dataUrl) {
           console.error("BeHeld: capture failed", chrome.runtime.lastError);
           sendResponse({ success: false });
           return;
         }
 
-        chrome.tabs.sendMessage(
-          activeTab.id!,
-          { type: "SHOW_STRIP", dataUrl },
-          () => {
-            if (chrome.runtime.lastError) {
-              console.error(
-                "BeHeld: could not reach content script — reload the tab after updating the extension",
-                chrome.runtime.lastError
-              );
+        try {
+          const folders = await getFolders();
+          chrome.tabs.sendMessage(
+            activeTab.id!,
+            { type: "SHOW_STRIP", dataUrl, folders },
+            () => {
+              if (chrome.runtime.lastError) {
+                console.error(
+                  "BeHeld: could not reach content script — reload the tab after updating the extension",
+                  chrome.runtime.lastError
+                );
+              }
             }
-          }
-        );
-        sendResponse({ success: true });
+          );
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error("BeHeld: failed to get folders", error);
+          sendResponse({ success: false });
+        }
       });
     });
     return true;
