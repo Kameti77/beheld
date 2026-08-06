@@ -16,6 +16,15 @@
     "default_popup": "src/popup/popup.html",
     "default_title": "BeHeld"
   },
+  "commands": {
+    "take-screenshot": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Capture a screenshot of the current tab"
+    }
+  },
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
