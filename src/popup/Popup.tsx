@@ -30,7 +30,6 @@ function Popup() {
       const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
       await set("beheld-root-handle", handle);
       setRootHandle(handle);
-      setViewMode("main");
       setShowConfirmation(true);
       setTimeout(() => setShowConfirmation(false), 1500);
     } catch {
@@ -41,13 +40,6 @@ function Popup() {
   const handleCapture = () => {
     chrome.runtime.sendMessage(
       { type: "CAPTURE_SCREENSHOT" },
-      () => { window.close(); }
-    );
-  };
-
-  const handleOpenClipboard = () => {
-    chrome.runtime.sendMessage(
-      { type: "OPEN_CLIPBOARD_STRIP" },
       () => { window.close(); }
     );
   };
@@ -90,28 +82,54 @@ function Popup() {
   }
 
   if (viewMode === "settings") {
+    const isMac = navigator.platform.includes("Mac");
+    const shortcutKeys = isMac ? ["⌘", "Shift", "S"] : ["Ctrl", "Shift", "S"];
+
     return (
       <div style={{ width: 300, padding: 20, background: "#1A2E1A", color: "#4ADE80" }}>
-        <button
-          onClick={() => setViewMode("main")}
-          aria-label="Back"
+        <div
           style={{
-            background: "none",
-            border: "none",
-            color: "#4ADE80",
-            fontSize: 16,
-            cursor: "pointer",
-            padding: 0,
-            marginBottom: 16,
+            display: "grid",
+            gridTemplateColumns: "24px 1fr 24px",
+            alignItems: "center",
+            marginBottom: 20,
           }}
         >
-          ← Back
-        </button>
-        <h1 style={{ fontSize: 20, marginBottom: 8 }}>Settings</h1>
-        <p style={{ fontSize: 13, marginBottom: 4 }}>Root folder</p>
-        <p style={{ fontSize: 14, marginBottom: 20, fontWeight: 600 }}>
-          {rootHandle?.name ?? "Unknown"}
-        </p>
+          <button
+            onClick={() => setViewMode("main")}
+            aria-label="Back"
+            style={{
+              background: "none",
+              border: "none",
+              color: "#4ADE80",
+              fontSize: 16,
+              cursor: "pointer",
+              padding: 0,
+              justifySelf: "start",
+            }}
+          >
+            ←
+          </button>
+          <h1 style={{ fontSize: 18, margin: 0, textAlign: "center" }}>Settings</h1>
+          <div />
+        </div>
+
+        <p style={{ fontSize: 13, marginBottom: 8 }}>Where your screenshots are saved</p>
+        <div
+          style={{
+            background: "#1A2E1A",
+            color: "#4ADE80",
+            fontFamily: "monospace",
+            fontSize: 13,
+            border: "1px solid #2d4a2d",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            wordBreak: "break-all",
+          }}
+        >
+          📁 {rootHandle?.name ?? "Unknown"}
+        </div>
         <button
           onClick={handleChangeFolder}
           style={{
@@ -127,6 +145,50 @@ function Popup() {
         >
           Change folder
         </button>
+        {showConfirmation && (
+          <p
+            style={{
+              fontSize: 12,
+              color: "#4ADE80",
+              background: "#1A2E1A",
+              border: "1px solid #2d4a2d",
+              padding: "6px 8px",
+              borderRadius: 6,
+              marginTop: 8,
+              marginBottom: 0,
+            }}
+          >
+            ✓ Folder updated
+          </p>
+        )}
+        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 8, marginBottom: 24, lineHeight: 1.5 }}>
+          BeHeld saves all screenshots into subfolders inside this location. Changing it does not move your existing screenshots.
+        </p>
+
+        <p style={{ fontSize: 13, marginBottom: 8 }}>Trigger a screenshot</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          {shortcutKeys.map((key, i) => (
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span
+                style={{
+                  background: "#1A2E1A",
+                  color: "#4ADE80",
+                  border: "1px solid #2d4a2d",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  fontFamily: "monospace",
+                }}
+              >
+                {key}
+              </span>
+              {i < shortcutKeys.length - 1 && <span style={{ fontSize: 12, opacity: 0.65 }}>+</span>}
+            </span>
+          ))}
+        </div>
+        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 0, marginBottom: 0, lineHeight: 1.5 }}>
+          Press this anywhere in Chrome to capture the current tab instantly, without opening the popup.
+        </p>
       </div>
     );
   }
@@ -157,11 +219,8 @@ function Popup() {
       <p style={{ fontSize: 11, color: "#555", marginTop: 0, marginBottom: 8 }}>
         or press Ctrl+Shift+S anywhere
       </p>
-      <button onClick={handleOpenLibrary} style={{ width: "100%", marginBottom: 4 }}>
-        Library
-      </button>
-      <button onClick={handleOpenClipboard} style={{ width: "100%" }}>
-        Open Clipboard
+      <button onClick={handleOpenLibrary} style={{ width: "100%" }}>
+        Library & Clipboard
       </button>
       {showConfirmation && (
         <p

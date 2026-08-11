@@ -216,13 +216,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "GET_FOLDER_CONTENTS") {
-    relayToOffscreen<{ items?: unknown[] }>("OFFSCREEN_GET_FOLDER_CONTENTS", {
-      folderName: message.folderName,
-    })
-      .then((response) => sendResponse({ items: response?.items ?? [] }))
+    relayToOffscreen<{ items?: unknown[]; hasOlder?: boolean; permissionDenied?: boolean }>(
+      "OFFSCREEN_GET_FOLDER_CONTENTS",
+      { folderName: message.folderName, includeOlder: message.includeOlder ?? false }
+    )
+      .then((response) =>
+        sendResponse({
+          items: response?.items ?? [],
+          hasOlder: response?.hasOlder ?? false,
+          permissionDenied: response?.permissionDenied ?? false,
+        })
+      )
       .catch((error) => {
         console.error("BeHeld: failed to get folder contents", error);
-        sendResponse({ items: [] });
+        sendResponse({ items: [], hasOlder: false, permissionDenied: false });
       });
     return true;
   }

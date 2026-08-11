@@ -14,6 +14,7 @@ type StripState = "prompt" | "folders" | "dismissed";
 interface Confirmation {
   kind: "success" | "error";
   message: string;
+  holdMs?: number;
 }
 
 // ── SITE-WIDE COPY CAPTURE ─────────────────────────────────
@@ -464,7 +465,7 @@ function DecisionStrip({
   // Holds the confirmation on screen for its full duration, then starts the fade-out.
   useEffect(() => {
     if (!confirmation || confirmationFading) return;
-    const holdMs = confirmation.kind === "success" ? 1500 : 2000;
+    const holdMs = confirmation.holdMs ?? (confirmation.kind === "success" ? 1500 : 2000);
     const holdTimer = setTimeout(() => setConfirmationFading(true), holdMs);
     return () => clearTimeout(holdTimer);
   }, [confirmation, confirmationFading]);
@@ -484,9 +485,9 @@ function DecisionStrip({
     return () => clearTimeout(fadeTimer);
   }, [confirmation, confirmationFading]);
 
-  const showConfirmation = (kind: "success" | "error", message: string) => {
+  const showConfirmation = (kind: "success" | "error", message: string, holdMs?: number) => {
     setConfirmationFading(false);
-    setConfirmation({ kind, message });
+    setConfirmation({ kind, message, holdMs });
   };
 
   // Opened directly from the popup (no screenshot) — jump straight to the clipboard panel.
@@ -627,6 +628,17 @@ function DecisionStrip({
         }
       }
     );
+  };
+
+  // The screenshot is already sitting in the OS screenshots folder by the time the
+  // strip appears (see background capture flow) — this just puts the image data on
+  // the system clipboard so the user can paste it wherever they actually want it,
+  // bypassing the BeHeld folder/IndexedDB save path entirely.
+  const handleSaveToSystemFolder = () => {
+    if (!workingDataUrl) return;
+    navigator.clipboard.writeText(workingDataUrl).then(() => {
+      showConfirmation("success", "Copied — paste into any app to save", 2000);
+    });
   };
 
   const renderFolderRow = (folder: string) => (
@@ -852,24 +864,6 @@ function DecisionStrip({
             </button>
 
             <button
-              onClick={() => {
-                copyImageToClipboard(workingDataUrl!).then(() => {
-                  showConfirmation("success", "Copied to clipboard");
-                });
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#5a7a5a",
-                fontSize: "12px",
-                cursor: "pointer",
-                marginTop: "4px",
-              }}
-            >
-              Copy to clipboard only
-            </button>
-
-            <button
               onClick={handleBrowseFolder}
               disabled={browsing}
               style={{
@@ -903,6 +897,28 @@ function DecisionStrip({
               }}
             >
               📄 Save as PDF
+            </button>
+
+            <button
+              onClick={handleSaveToSystemFolder}
+              style={{
+                background: "transparent",
+                border: "1px solid #2d4a2d",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                color: "#6a8a6a",
+                fontSize: "12px",
+                cursor: "pointer",
+                textAlign: "left",
+                display: "flex",
+                flexDirection: "column",
+                gap: "2px",
+              }}
+            >
+              <span>Save to system screenshots folder</span>
+              <span style={{ fontSize: "10px", color: "#4a6a4a" }}>
+                The screenshot is already in your system screenshots folder
+              </span>
             </button>
           </div>
         )}

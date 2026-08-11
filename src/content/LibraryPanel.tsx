@@ -8,6 +8,90 @@ interface FolderContentItem {
   thumbnailDataUrl: string;
 }
 
+interface FolderContentsState {
+  items: FolderContentItem[];
+  hasOlder: boolean;
+  permissionDenied: boolean;
+}
+
+function FolderThumbnail({
+  item,
+  isConfirming,
+  onDeleteClick,
+  onConfirmDelete,
+  onCancelDelete,
+}: {
+  item: FolderContentItem;
+  isConfirming: boolean;
+  onDeleteClick: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "72px" }}>
+      <div className="beheld-lib-thumb" style={{ position: "relative", width: "72px", height: "72px" }}>
+        <img
+          src={item.thumbnailDataUrl}
+          alt={item.filename}
+          onLoad={() => setLoaded(true)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            borderRadius: "6px",
+            border: "1px solid #2d4a2d",
+            opacity: loaded ? 1 : 0,
+            transition: "opacity 0.3s ease",
+          }}
+        />
+        {!isConfirming && (
+          <button
+            onClick={onDeleteClick}
+            title="Delete"
+            className="beheld-lib-thumb-delete"
+            style={{
+              position: "absolute",
+              top: "2px",
+              right: "2px",
+              border: "none",
+              background: "rgba(26, 46, 26, 0.85)",
+              color: "#e2685f",
+              borderRadius: "4px",
+              fontSize: "11px",
+              cursor: "pointer",
+              padding: "2px 4px",
+              lineHeight: 1,
+            }}
+          >
+            🗑
+          </button>
+        )}
+      </div>
+      {isConfirming && (
+        <div style={{ fontSize: "10px", color: "#c4e8c4", textAlign: "center", lineHeight: 1.3 }}>
+          Delete this screenshot?
+          <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "2px" }}>
+            <button
+              onClick={onConfirmDelete}
+              style={{ border: "none", background: "transparent", color: "#e2685f", cursor: "pointer", fontSize: "11px" }}
+            >
+              Yes
+            </button>
+            <button
+              onClick={onCancelDelete}
+              style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "11px" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── LIBRARY PANEL ──────────────────────────────────────────
 // A persistent browsing UI (Folders + Clipboard tabs) mounted from the popup's
 // "Library" button — unlike DecisionStrip's prompt bubble, it never auto-dismisses.
@@ -17,9 +101,10 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
   const [localFolders, setLocalFolders] = useState<string[]>(folders);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
-  const [folderContents, setFolderContents] = useState<Record<string, FolderContentItem[]>>({});
+  const [folderContents, setFolderContents] = useState<Record<string, FolderContentsState>>({});
   const [loadingFolder, setLoadingFolder] = useState<string | null>(null);
   const [confirmingDeleteFolder, setConfirmingDeleteFolder] = useState<string | null>(null);
+  const [confirmingDeleteScreenshot, setConfirmingDeleteScreenshot] = useState<string | null>(null);
 
   const clipboard = useClipboardItems();
 
@@ -60,6 +145,24 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     });
   };
 
+  const loadFolderContents = (name: string, includeOlder: boolean) => {
+    setLoadingFolder(name);
+    chrome.runtime.sendMessage(
+      { type: "GET_FOLDER_CONTENTS", folderName: name, includeOlder },
+      (response) => {
+        setFolderContents((prev) => ({
+          ...prev,
+          [name]: {
+            items: response?.items ?? [],
+            hasOlder: response?.hasOlder ?? false,
+            permissionDenied: response?.permissionDenied ?? false,
+          },
+        }));
+        setLoadingFolder(null);
+      }
+    );
+  };
+
   const handleToggleFolder = (name: string) => {
     if (expandedFolder === name) {
       setExpandedFolder(null);
@@ -67,11 +170,11 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     }
     setExpandedFolder(name);
     if (folderContents[name]) return;
-    setLoadingFolder(name);
-    chrome.runtime.sendMessage({ type: "GET_FOLDER_CONTENTS", folderName: name }, (response) => {
-      setFolderContents((prev) => ({ ...prev, [name]: response?.items ?? [] }));
-      setLoadingFolder(null);
-    });
+    loadFolderContents(name, false);
+  };
+
+  const handleShowOlder = (name: string) => {
+    loadFolderContents(name, true);
   };
 
   const handleDeleteScreenshot = (folder: string, filename: string) => {
@@ -79,14 +182,22 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
       { type: "DELETE_SCREENSHOT", folderName: folder, filename },
       (response) => {
         if (response?.success) {
-          setFolderContents((prev) => ({
-            ...prev,
-            [folder]: (prev[folder] ?? []).filter((item) => item.filename !== filename),
-          }));
+          setFolderContents((prev) => {
+            const current = prev[folder];
+            if (!current) return prev;
+            return {
+              ...prev,
+              [folder]: {
+                ...current,
+                items: current.items.filter((item) => item.filename !== filename),
+              },
+            };
+          });
           setCounts((prev) => ({ ...prev, [folder]: Math.max(0, (prev[folder] ?? 1) - 1) }));
         } else {
           console.error(`BeHeld: failed to delete screenshot ${filename}`);
         }
+        setConfirmingDeleteScreenshot(null);
       }
     );
   };
@@ -144,47 +255,77 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
       </div>
 
       {expandedFolder === folder && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "10px 4px 4px 4px" }}>
+        <div style={{ padding: "10px 4px 4px 4px" }}>
           {loadingFolder === folder && (
             <div style={{ fontSize: "11px", color: "#5a7a5a" }}>Loading…</div>
           )}
-          {loadingFolder !== folder && (folderContents[folder]?.length ?? 0) === 0 && (
-            <div style={{ fontSize: "11px", color: "#5a7a5a" }}>No screenshots yet.</div>
+          {loadingFolder !== folder && folderContents[folder]?.permissionDenied && (
+            <div style={{ fontSize: "11px", color: "#F59E0B" }}>
+              Permission needed — open the popup and re-select your screenshots folder.
+            </div>
           )}
           {loadingFolder !== folder &&
-            (folderContents[folder] ?? []).map((item) => (
-              <div
-                key={item.filename}
-                className="beheld-lib-thumb"
-                style={{ position: "relative", width: "72px", height: "72px" }}
-              >
-                <img
-                  src={item.thumbnailDataUrl}
-                  alt={item.filename}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "6px", border: "1px solid #2d4a2d" }}
-                />
-                <button
-                  onClick={() => handleDeleteScreenshot(folder, item.filename)}
-                  title="Delete"
-                  className="beheld-lib-thumb-delete"
-                  style={{
-                    position: "absolute",
-                    top: "2px",
-                    right: "2px",
-                    border: "none",
-                    background: "rgba(26, 46, 26, 0.85)",
-                    color: "#e2685f",
-                    borderRadius: "4px",
-                    fontSize: "11px",
-                    cursor: "pointer",
-                    padding: "2px 4px",
-                    lineHeight: 1,
-                  }}
-                >
-                  🗑
-                </button>
+            !folderContents[folder]?.permissionDenied &&
+            (folderContents[folder]?.items.length ?? 0) === 0 && (
+              <div>
+                <div style={{ fontSize: "11px", color: "#5a7a5a" }}>No recent screenshots in this folder</div>
+                {folderContents[folder]?.hasOlder && (
+                  <button
+                    onClick={() => handleShowOlder(folder)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#4ADE80",
+                      cursor: "pointer",
+                      fontSize: "11px",
+                      padding: 0,
+                      marginTop: "6px",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    Show older
+                  </button>
+                )}
               </div>
-            ))}
+            )}
+          {loadingFolder !== folder &&
+            !folderContents[folder]?.permissionDenied &&
+            (folderContents[folder]?.items.length ?? 0) > 0 && (
+              <div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {(folderContents[folder]?.items ?? []).map((item) => {
+                    const key = `${folder}|${item.filename}`;
+                    return (
+                      <FolderThumbnail
+                        key={item.filename}
+                        item={item}
+                        isConfirming={confirmingDeleteScreenshot === key}
+                        onDeleteClick={() => setConfirmingDeleteScreenshot(key)}
+                        onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)}
+                        onCancelDelete={() => setConfirmingDeleteScreenshot(null)}
+                      />
+                    );
+                  })}
+                </div>
+                {folderContents[folder]?.hasOlder && (
+                  <button
+                    onClick={() => handleShowOlder(folder)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#4ADE80",
+                      cursor: "pointer",
+                      fontSize: "11px",
+                      padding: 0,
+                      marginTop: "8px",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    Show older
+                  </button>
+                )}
+              </div>
+            )}
         </div>
       )}
     </div>
@@ -226,31 +367,33 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
         <div style={{ display: "flex", gap: "6px" }}>
           <button
             onClick={() => setTab("folders")}
+            title="Folders"
             style={{
               background: tab === "folders" ? "#2d4a2d" : "transparent",
               border: `1px solid ${tab === "folders" ? "#4ADE80" : "#3a5e3a"}`,
               borderRadius: "6px",
               padding: "6px 12px",
               color: tab === "folders" ? "#4ADE80" : "#c4e8c4",
-              fontSize: "12px",
+              fontSize: "14px",
               cursor: "pointer",
             }}
           >
-            Folders
+            📁
           </button>
           <button
             onClick={() => setTab("clipboard")}
+            title="Clipboard"
             style={{
               background: tab === "clipboard" ? "#2d4a2d" : "transparent",
               border: `1px solid ${tab === "clipboard" ? "#4ADE80" : "#3a5e3a"}`,
               borderRadius: "6px",
               padding: "6px 12px",
               color: tab === "clipboard" ? "#4ADE80" : "#c4e8c4",
-              fontSize: "12px",
+              fontSize: "14px",
               cursor: "pointer",
             }}
           >
-            Clipboard
+            📑
           </button>
         </div>
         <button

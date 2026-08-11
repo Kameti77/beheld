@@ -62,8 +62,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "OFFSCREEN_GET_FOLDER_CONTENTS") {
-    getFolderContents(message.folderName).then((items) => {
-      sendResponse({ items });
+    getFolderContents(message.folderName, message.includeOlder ?? false).then((result) => {
+      sendResponse(result);
     });
     return true;
   }
@@ -238,6 +238,14 @@ interface FolderContentItem {
   thumbnailDataUrl: string;
 }
 
+interface FolderContentsResult {
+  items: FolderContentItem[];
+  hasOlder: boolean;
+  permissionDenied: boolean;
+}
+
+const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function getFolderSummary(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   try {
@@ -293,27 +301,51 @@ async function createThumbnail(blob: Blob): Promise<string> {
   return canvas.toDataURL("image/png");
 }
 
-async function getFolderContents(folderName: string): Promise<FolderContentItem[]> {
-  const items: FolderContentItem[] = [];
+async function getFolderContents(
+  folderName: string,
+  includeOlder = false
+): Promise<FolderContentsResult> {
   try {
     const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
-    if (!rootHandle) return items;
+    if (!rootHandle) return { items: [], hasOlder: false, permissionDenied: false };
+
+    const permission = await (rootHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") {
+      console.error("Offscreen: permission denied");
+      return { items: [], hasOlder: false, permissionDenied: true };
+    }
 
     const folderHandle = await rootHandle.getDirectoryHandle(folderName);
+    const cutoff = Date.now() - RECENT_WINDOW_MS;
+    const dated: (FolderContentItem & { lastModified: number })[] = [];
+    let hasOlder = false;
+
     for await (const [name, handle] of folderHandle.entries()) {
       if (handle.kind !== "file") continue;
       try {
         const file = await handle.getFile();
+        const isOlder = file.lastModified < cutoff;
+        if (isOlder) hasOlder = true;
+        if (isOlder && !includeOlder) continue;
+
         const thumbnailDataUrl = await createThumbnail(file);
-        items.push({ filename: name, thumbnailDataUrl });
+        dated.push({ filename: name, thumbnailDataUrl, lastModified: file.lastModified });
       } catch (error) {
         console.error(`Offscreen: failed to build thumbnail for ${name}`, error);
       }
     }
+
+    dated.sort((a, b) => b.lastModified - a.lastModified);
+    const items = dated.map(({ filename, thumbnailDataUrl }) => ({ filename, thumbnailDataUrl }));
+
+    return { items, hasOlder: !includeOlder && hasOlder, permissionDenied: false };
   } catch (error) {
     console.error("Offscreen folder contents error:", error);
+    return { items: [], hasOlder: false, permissionDenied: false };
   }
-  return items;
 }
 
 async function deleteScreenshot(folderName: string, filename: string): Promise<boolean> {
