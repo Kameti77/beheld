@@ -630,15 +630,24 @@ function DecisionStrip({
     );
   };
 
-  // The screenshot is already sitting in the OS screenshots folder by the time the
-  // strip appears (see background capture flow) — this just puts the image data on
-  // the system clipboard so the user can paste it wherever they actually want it,
-  // bypassing the BeHeld folder/IndexedDB save path entirely.
-  const handleSaveToSystemFolder = () => {
+  // Quick-saves workingDataUrl (respecting any crop already applied) straight to the
+  // single default folder chosen once in the popup's settings view — see hard platform
+  // fact #3: only a handle picked in the popup can be persisted for silent reuse here.
+  const handleSaveToDefaultFolder = () => {
     if (!workingDataUrl) return;
-    navigator.clipboard.writeText(workingDataUrl).then(() => {
-      showConfirmation("success", "Copied — paste into any app to save", 2000);
-    });
+    chrome.runtime.sendMessage(
+      { type: "SAVE_TO_DEFAULT_FOLDER", dataUrl: workingDataUrl },
+      (response) => {
+        if (response?.success) {
+          showConfirmation("success", "Saved to default folder");
+        } else if (response?.noDefaultSet) {
+          showConfirmation("error", "No default folder set — choose one in Settings", 2500);
+        } else {
+          console.error("BeHeld: failed to save to default folder", chrome.runtime.lastError);
+          showConfirmation("error", "Something went wrong");
+        }
+      }
+    );
   };
 
   const renderFolderRow = (folder: string) => (
@@ -900,7 +909,7 @@ function DecisionStrip({
             </button>
 
             <button
-              onClick={handleSaveToSystemFolder}
+              onClick={handleSaveToDefaultFolder}
               style={{
                 background: "transparent",
                 border: "1px solid #2d4a2d",
@@ -915,9 +924,9 @@ function DecisionStrip({
                 gap: "2px",
               }}
             >
-              <span>Save to system screenshots folder</span>
+              <span>Save to default folder</span>
               <span style={{ fontSize: "10px", color: "#4a6a4a" }}>
-                The screenshot is already in your system screenshots folder
+                Quick-saves to the folder you chose once in Settings
               </span>
             </button>
           </div>
@@ -1069,6 +1078,121 @@ function showCaptureFlash() {
   }, 150);
 }
 
+// ── FULL-PAGE SCROLLING CAPTURE ─────────────────────────────
+// Only the service worker can call chrome.tabs.captureVisibleTab, so this content
+// script drives the scrolling/layout side (it can read and change the page) while
+// repeatedly asking the service worker for a pixel capture of whatever is currently
+// visible, then stitches the results into one tall image client-side.
+const FULL_PAGE_MAX_SLICES = 20;
+const FULL_PAGE_SETTLE_DELAY_MS = 120;
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function captureSliceFromServiceWorker(): Promise<string | null> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "CAPTURE_SLICE" }, (response) => {
+      if (chrome.runtime.lastError || !response?.dataUrl) {
+        console.error("BeHeld: slice capture failed", chrome.runtime.lastError);
+        resolve(null);
+        return;
+      }
+      resolve(response.dataUrl);
+    });
+  });
+}
+
+async function runFullPageCapture() {
+  showCaptureFlash();
+
+  const originalScrollX = window.scrollX;
+  const originalScrollY = window.scrollY;
+  const viewportHeight = window.innerHeight;
+
+  // Fixed/sticky elements (sticky headers, navs, cookie banners, ...) would otherwise
+  // repeat in every slice — this is a best-effort heuristic based on computed position
+  // alone, so not every site's sticky UI will be caught by it.
+  const stickyElements: { el: HTMLElement; originalVisibility: string }[] = [];
+  document.querySelectorAll<HTMLElement>("body *").forEach((el) => {
+    const position = window.getComputedStyle(el).position;
+    if (position === "fixed" || position === "sticky") {
+      stickyElements.push({ el, originalVisibility: el.style.visibility });
+      el.style.visibility = "hidden";
+    }
+  });
+
+  const captures: { dataUrl: string; scrollY: number }[] = [];
+
+  try {
+    let lastScrollY = -1;
+    let lastMeasuredHeight = document.documentElement.scrollHeight;
+
+    for (let i = 0; i < FULL_PAGE_MAX_SLICES; i++) {
+      const targetY = i * viewportHeight;
+      window.scrollTo(0, targetY);
+      await waitForPaint();
+      await delay(FULL_PAGE_SETTLE_DELAY_MS);
+
+      // Browsers clamp scroll position near the bottom of the page, so the achieved
+      // position (not the requested target) is what actually determines where this
+      // slice belongs in the stitched image.
+      const achievedY = window.scrollY;
+      if (achievedY === lastScrollY) break;
+
+      const currentHeight = document.documentElement.scrollHeight;
+      if (currentHeight < lastMeasuredHeight) break; // page height shrank unexpectedly mid-capture
+
+      const dataUrl = await captureSliceFromServiceWorker();
+      if (!dataUrl) break;
+
+      captures.push({ dataUrl, scrollY: achievedY });
+      lastScrollY = achievedY;
+      lastMeasuredHeight = currentHeight;
+
+      if (achievedY + viewportHeight >= currentHeight) break; // bottom reached
+    }
+  } finally {
+    stickyElements.forEach(({ el, originalVisibility }) => {
+      el.style.visibility = originalVisibility;
+    });
+    window.scrollTo(originalScrollX, originalScrollY);
+  }
+
+  if (captures.length === 0) return;
+
+  const images = await Promise.all(captures.map((c) => loadImage(c.dataUrl)));
+  // All slices are captured at the same viewport size/DPI, so the first image's own
+  // pixel-per-CSS-pixel ratio applies uniformly to every slice's recorded scrollY.
+  const scale = images[0].naturalHeight / viewportHeight;
+  const canvasWidth = images[0].naturalWidth;
+  const totalCssHeight = Math.max(...captures.map((c) => c.scrollY + viewportHeight));
+  const canvasHeight = Math.round(totalCssHeight * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    console.error("BeHeld: canvas context unavailable for full-page stitch");
+    return;
+  }
+
+  captures.forEach((capture, index) => {
+    const destY = Math.round(capture.scrollY * scale);
+    ctx.drawImage(images[index], 0, destY);
+  });
+
+  const stitchedDataUrl = canvas.toDataURL("image/png");
+  chrome.runtime.sendMessage({ type: "FULL_PAGE_CAPTURE_COMPLETE", dataUrl: stitchedDataUrl });
+}
+
 // ── MOUNT ──────────────────────────────────────────────────
 function mountStrip(dataUrl: string | null, folders: string[], startWithClipboardOpen?: boolean) {
   closeCropOverlayIfOpen();
@@ -1105,5 +1229,9 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "SHOW_LIBRARY") {
     mountLibrary(message.folders ?? ["Temp"]);
+  }
+
+  if (message.type === "START_FULL_PAGE_CAPTURE") {
+    runFullPageCapture();
   }
 });

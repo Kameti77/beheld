@@ -14,18 +14,28 @@ interface FolderContentsState {
   permissionDenied: boolean;
 }
 
+interface LightboxState {
+  folder: string;
+  filename: string;
+  loading: boolean;
+  error: boolean;
+  dataUrl: string | null;
+}
+
 function FolderThumbnail({
   item,
   isConfirming,
   onDeleteClick,
   onConfirmDelete,
   onCancelDelete,
+  onImageClick,
 }: {
   item: FolderContentItem;
   isConfirming: boolean;
   onDeleteClick: () => void;
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
+  onImageClick: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
 
@@ -36,6 +46,9 @@ function FolderThumbnail({
           src={item.thumbnailDataUrl}
           alt={item.filename}
           onLoad={() => setLoaded(true)}
+          onClick={() => {
+            if (!isConfirming) onImageClick();
+          }}
           style={{
             width: "100%",
             height: "100%",
@@ -44,6 +57,7 @@ function FolderThumbnail({
             border: "1px solid #2d4a2d",
             opacity: loaded ? 1 : 0,
             transition: "opacity 0.3s ease",
+            cursor: isConfirming ? "default" : "pointer",
           }}
         />
         {!isConfirming && (
@@ -93,30 +107,26 @@ function FolderThumbnail({
 }
 
 // ── LIBRARY PANEL ──────────────────────────────────────────
-// A persistent browsing UI (Folders + Clipboard tabs) mounted from the popup's
-// "Library" button — unlike DecisionStrip's prompt bubble, it never auto-dismisses.
+// A persistent browsing UI mounted from the popup's "Library" button. Unlike
+// DecisionStrip's prompt bubble it never auto-dismisses, and — mirroring
+// DecisionStrip's own icon column — it collapses by default to a thin icon
+// strip, expanding at most one of its two views (Folders / Clipboard) at a time.
 export function LibraryPanel({ folders }: { folders: string[] }) {
   const [closed, setClosed] = useState(false);
-  const [tab, setTab] = useState<LibraryTab>("folders");
+  const [expandedView, setExpandedView] = useState<LibraryTab | null>(null);
   const [localFolders, setLocalFolders] = useState<string[]>(folders);
-  const [counts, setCounts] = useState<Record<string, number>>({});
   const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
   const [folderContents, setFolderContents] = useState<Record<string, FolderContentsState>>({});
   const [loadingFolder, setLoadingFolder] = useState<string | null>(null);
   const [confirmingDeleteFolder, setConfirmingDeleteFolder] = useState<string | null>(null);
   const [confirmingDeleteScreenshot, setConfirmingDeleteScreenshot] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
 
   const clipboard = useClipboardItems();
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: "GET_FOLDER_SUMMARY" }, (response) => {
-      setCounts(response?.counts ?? {});
-    });
-  }, []);
-
-  useEffect(() => {
-    if (tab === "clipboard") clipboard.load();
-  }, [tab]);
+    if (expandedView === "clipboard") clipboard.load();
+  }, [expandedView]);
 
   if (closed) return null;
 
@@ -127,11 +137,6 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     chrome.runtime.sendMessage({ type: "DELETE_FOLDER", folderName: name }, (response) => {
       if (response?.success) {
         setLocalFolders((prev) => prev.filter((f) => f !== name));
-        setCounts((prev) => {
-          const next = { ...prev };
-          delete next[name];
-          return next;
-        });
         setFolderContents((prev) => {
           const next = { ...prev };
           delete next[name];
@@ -193,13 +198,34 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
               },
             };
           });
-          setCounts((prev) => ({ ...prev, [folder]: Math.max(0, (prev[folder] ?? 1) - 1) }));
         } else {
           console.error(`BeHeld: failed to delete screenshot ${filename}`);
         }
         setConfirmingDeleteScreenshot(null);
       }
     );
+  };
+
+  const openLightbox = (folder: string, filename: string) => {
+    setLightbox({ folder, filename, loading: true, error: false, dataUrl: null });
+    chrome.runtime.sendMessage(
+      { type: "GET_SCREENSHOT", folderName: folder, filename },
+      (response) => {
+        setLightbox((prev) => {
+          if (!prev || prev.folder !== folder || prev.filename !== filename) return prev;
+          if (response?.success && response?.dataUrl) {
+            return { ...prev, loading: false, error: false, dataUrl: response.dataUrl };
+          }
+          return { ...prev, loading: false, error: true };
+        });
+      }
+    );
+  };
+
+  const closeLightbox = () => setLightbox(null);
+
+  const handleToggleView = (view: LibraryTab) => {
+    setExpandedView((prev) => (prev === view ? null : view));
   };
 
   const renderFolderRow = (folder: string) => (
@@ -241,7 +267,6 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
               }}
             >
               <span>{expandedFolder === folder ? "📂" : "📁"} {folder}</span>
-              <span style={{ fontSize: "11px", opacity: 0.75 }}>{counts[folder] ?? "…"}</span>
             </button>
             <button
               onClick={() => setConfirmingDeleteFolder(folder)}
@@ -303,6 +328,7 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
                         onDeleteClick={() => setConfirmingDeleteScreenshot(key)}
                         onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)}
                         onCancelDelete={() => setConfirmingDeleteScreenshot(null)}
+                        onImageClick={() => openLightbox(folder, item.filename)}
                       />
                     );
                   })}
@@ -331,22 +357,23 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     </div>
   );
 
+  // Mirrors DecisionStrip's icon column: rounded on whichever edges aren't
+  // flush against an expanded view, flat on the seam shared with it.
+  let iconColumnRadius = "8px";
+  if (expandedView === "folders") iconColumnRadius = "0 8px 8px 0";
+  if (expandedView === "clipboard") iconColumnRadius = "8px 8px 0 0";
+
   return (
+    <>
     <div
       style={{
         position: "fixed",
         top: "60px",
         right: "20px",
-        width: "360px",
-        maxHeight: "80vh",
-        background: "#1A2E1A",
-        border: "1px solid #2d4a2d",
-        borderRadius: "12px",
-        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
         zIndex: 999999,
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
+        alignItems: "flex-end",
         fontFamily: "sans-serif",
       }}
     >
@@ -355,69 +382,182 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
         .beheld-lib-thumb:hover .beheld-lib-thumb-delete { opacity: 1; }
       `}</style>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 14px",
-          borderBottom: "1px solid #2d4a2d",
-        }}
-      >
-        <div style={{ display: "flex", gap: "6px" }}>
-          <button
-            onClick={() => setTab("folders")}
+      {/* Folders view expands to the left of the icon column, matching
+          DecisionStrip's own folder-panel-to-the-left convention. */}
+      <div style={{ display: "flex", alignItems: "flex-start" }}>
+        {expandedView === "folders" && (
+          <div
+            style={{
+              background: "#1f361f",
+              border: "1px solid #2d4a2d",
+              borderRadius: "8px 0 0 8px",
+              padding: "12px 14px",
+              width: "320px",
+              maxHeight: "70vh",
+              overflowY: "auto",
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ fontSize: "11px", color: "#5a7a5a", lineHeight: 1.4 }}>
+                Folders show screenshots from the last 7 days only. Open your screenshots folder in File Explorer or Finder to view older or all saved files directly.
+              </div>
+              {regularFolders.map(renderFolderRow)}
+              {hasTemp && renderFolderRow("Temp")}
+            </div>
+          </div>
+        )}
+
+        <div
+          style={{
+            background: "#1A2E1A",
+            borderRadius: iconColumnRadius,
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
+            width: "36px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            padding: "10px 0",
+            gap: "12px",
+          }}
+        >
+          <div
+            onClick={() => handleToggleView("folders")}
             title="Folders"
             style={{
-              background: tab === "folders" ? "#2d4a2d" : "transparent",
-              border: `1px solid ${tab === "folders" ? "#4ADE80" : "#3a5e3a"}`,
-              borderRadius: "6px",
-              padding: "6px 12px",
-              color: tab === "folders" ? "#4ADE80" : "#c4e8c4",
-              fontSize: "14px",
+              color: "#4ADE80",
+              fontSize: "18px",
               cursor: "pointer",
+              lineHeight: 1,
+              background: expandedView === "folders" ? "#243b24" : "transparent",
+              borderRadius: "4px",
+              padding: "2px",
             }}
           >
             📁
-          </button>
-          <button
-            onClick={() => setTab("clipboard")}
+          </div>
+
+          <div
+            onClick={() => handleToggleView("clipboard")}
             title="Clipboard"
             style={{
-              background: tab === "clipboard" ? "#2d4a2d" : "transparent",
-              border: `1px solid ${tab === "clipboard" ? "#4ADE80" : "#3a5e3a"}`,
-              borderRadius: "6px",
-              padding: "6px 12px",
-              color: tab === "clipboard" ? "#4ADE80" : "#c4e8c4",
-              fontSize: "14px",
+              color: "#4ADE80",
+              fontSize: "18px",
               cursor: "pointer",
+              lineHeight: 1,
+              background: expandedView === "clipboard" ? "#243b24" : "transparent",
+              borderRadius: "4px",
+              padding: "2px",
             }}
           >
             📑
+          </div>
+
+          <button
+            onClick={() => setClosed(true)}
+            title="Close"
+            style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "14px", lineHeight: 1 }}
+          >
+            ✕
           </button>
         </div>
-        <button
-          onClick={() => setClosed(true)}
-          title="Close"
-          style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "14px", lineHeight: 1 }}
-        >
-          ✕
-        </button>
       </div>
 
-      <div style={{ padding: "12px 14px", overflowY: "auto" }}>
-        {tab === "folders" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            <div style={{ fontSize: "11px", color: "#5a7a5a", lineHeight: 1.4 }}>
-              Open your screenshots folder in File Explorer or Finder to view the saved files directly.
-            </div>
-            {regularFolders.map(renderFolderRow)}
-            {hasTemp && renderFolderRow("Temp")}
-          </div>
-        ) : (
+      {/* Clipboard view expands below the icon column, matching DecisionStrip's
+          own clipboard-panel-below convention. */}
+      {expandedView === "clipboard" && (
+        <div
+          style={{
+            width: "320px",
+            background: "#1f361f",
+            border: "1px solid #2d4a2d",
+            borderRadius: "0 0 8px 8px",
+            padding: "10px",
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
+          }}
+        >
           <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" />
-        )}
-      </div>
+        </div>
+      )}
     </div>
+
+    {lightbox && (
+      <div
+        onClick={closeLightbox}
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0, 0, 0, 0.75)",
+          zIndex: 1000000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "relative",
+            maxWidth: "85vw",
+            maxHeight: "85vh",
+            background: "#1A2E1A",
+            border: "1px solid #2d4a2d",
+            borderRadius: "10px",
+            padding: "16px",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <button
+            onClick={closeLightbox}
+            title="Close"
+            style={{
+              position: "absolute",
+              top: "8px",
+              right: "8px",
+              border: "none",
+              background: "rgba(26, 46, 26, 0.85)",
+              color: "#c4e8c4",
+              borderRadius: "4px",
+              fontSize: "14px",
+              cursor: "pointer",
+              padding: "4px 8px",
+              lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
+          {lightbox.loading && (
+            <div style={{ color: "#c4e8c4", fontSize: "13px", padding: "48px 64px" }}>
+              Loading full image…
+            </div>
+          )}
+          {!lightbox.loading && lightbox.error && (
+            <div style={{ color: "#e2685f", fontSize: "13px", padding: "48px 64px" }}>
+              Failed to load full-resolution image.
+            </div>
+          )}
+          {!lightbox.loading && !lightbox.error && lightbox.dataUrl && (
+            <img
+              src={lightbox.dataUrl}
+              alt={lightbox.filename}
+              style={{
+                maxWidth: "85vw",
+                maxHeight: "85vh",
+                objectFit: "contain",
+                borderRadius: "6px",
+                display: "block",
+              }}
+            />
+          )}
+        </div>
+      </div>
+    )}
+    </>
   );
 }

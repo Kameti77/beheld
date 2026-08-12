@@ -33,6 +33,49 @@ async function getFolders(): Promise<string[]> {
   return response?.folders ?? ["Temp"];
 }
 
+// Shared tail for both capture paths: records the shot in clipboard history and fetches
+// the folder list in parallel, then hands the result to the content script's strip.
+// Both the single-viewport capture below and the full-page stitched capture funnel
+// through here so there is exactly one place that does this bookkeeping.
+async function finishCaptureAndShowStrip(dataUrl: string, tabId?: number): Promise<boolean> {
+  let targetTabId = tabId;
+  if (!targetTabId) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    targetTabId = tabs[0]?.id;
+  }
+  if (!targetTabId) {
+    return false;
+  }
+
+  try {
+    const [folders] = await Promise.all([
+      getFolders(),
+      relayToOffscreen("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
+        itemType: "image",
+        content: dataUrl,
+      }).catch((error) => {
+        console.error("BeHeld: failed to record screenshot in clipboard history", error);
+      }),
+    ]);
+    chrome.tabs.sendMessage(
+      targetTabId,
+      { type: "SHOW_STRIP", dataUrl, folders },
+      () => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "BeHeld: could not reach content script — reload the tab after updating the extension",
+            chrome.runtime.lastError
+          );
+        }
+      }
+    );
+    return true;
+  } catch (error) {
+    console.error("BeHeld: failed to get folders", error);
+    return false;
+  }
+}
+
 async function captureAndShowStrip(): Promise<boolean> {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const activeTab = tabs[0];
@@ -54,33 +97,36 @@ async function captureAndShowStrip(): Promise<boolean> {
     return false;
   }
 
-  try {
-    const [folders] = await Promise.all([
-      getFolders(),
-      relayToOffscreen("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
-        itemType: "image",
-        content: dataUrl,
-      }).catch((error) => {
-        console.error("BeHeld: failed to record screenshot in clipboard history", error);
-      }),
-    ]);
-    chrome.tabs.sendMessage(
-      activeTab.id!,
-      { type: "SHOW_STRIP", dataUrl, folders },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "BeHeld: could not reach content script — reload the tab after updating the extension",
-            chrome.runtime.lastError
-          );
-        }
-      }
-    );
-    return true;
-  } catch (error) {
-    console.error("BeHeld: failed to get folders", error);
-    return false;
+  return finishCaptureAndShowStrip(dataUrl, activeTab.id);
+}
+
+// chrome.tabs.captureVisibleTab is rate-limited to roughly two calls per second. A
+// full-page capture fires many CAPTURE_SLICE requests in quick succession, so every
+// call is funneled through here, which delays the actual capture (rather than firing
+// it immediately) whenever it would land too soon after the previous one.
+let lastSliceCaptureTime = 0;
+const SLICE_CAPTURE_MIN_INTERVAL_MS = 550;
+
+async function captureSlice(windowId?: number): Promise<{ dataUrl?: string }> {
+  const elapsed = Date.now() - lastSliceCaptureTime;
+  if (elapsed < SLICE_CAPTURE_MIN_INTERVAL_MS) {
+    await new Promise((resolve) => setTimeout(resolve, SLICE_CAPTURE_MIN_INTERVAL_MS - elapsed));
   }
+  lastSliceCaptureTime = Date.now();
+
+  return new Promise((resolve) => {
+    const callback = (result?: string) => {
+      if (chrome.runtime.lastError) {
+        console.error("BeHeld: slice capture failed", chrome.runtime.lastError);
+      }
+      resolve({ dataUrl: result });
+    };
+    if (windowId != null) {
+      chrome.tabs.captureVisibleTab(windowId, { format: "png" }, callback);
+    } else {
+      chrome.tabs.captureVisibleTab({ format: "png" }, callback);
+    }
+  });
 }
 
 chrome.commands.onCommand.addListener((command) => {
@@ -89,9 +135,42 @@ chrome.commands.onCommand.addListener((command) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CAPTURE_SCREENSHOT") {
     captureAndShowStrip().then((success) => sendResponse({ success }));
+    return true;
+  }
+
+  if (message.type === "CAPTURE_FULL_PAGE") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (!activeTab?.id) {
+        sendResponse({ success: false });
+        return;
+      }
+
+      chrome.tabs.sendMessage(activeTab.id, { type: "START_FULL_PAGE_CAPTURE" }, () => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "BeHeld: could not reach content script — reload the tab after updating the extension",
+            chrome.runtime.lastError
+          );
+        }
+      });
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (message.type === "CAPTURE_SLICE") {
+    captureSlice(sender.tab?.windowId).then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message.type === "FULL_PAGE_CAPTURE_COMPLETE") {
+    finishCaptureAndShowStrip(message.dataUrl, sender.tab?.id).then((success) =>
+      sendResponse({ success })
+    );
     return true;
   }
 
@@ -205,16 +284,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "GET_FOLDER_SUMMARY") {
-    relayToOffscreen<{ counts?: Record<string, number> }>("OFFSCREEN_GET_FOLDER_SUMMARY")
-      .then((response) => sendResponse({ counts: response?.counts ?? {} }))
-      .catch((error) => {
-        console.error("BeHeld: failed to get folder summary", error);
-        sendResponse({ counts: {} });
-      });
-    return true;
-  }
-
   if (message.type === "GET_FOLDER_CONTENTS") {
     relayToOffscreen<{ items?: unknown[]; hasOlder?: boolean; permissionDenied?: boolean }>(
       "OFFSCREEN_GET_FOLDER_CONTENTS",
@@ -270,6 +339,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "SAVE_TO_DEFAULT_FOLDER") {
+    relayToOffscreen<{ success?: boolean; noDefaultSet?: boolean }>(
+      "OFFSCREEN_SAVE_TO_DEFAULT_FOLDER",
+      { dataUrl: message.dataUrl }
+    )
+      .then((response) =>
+        sendResponse({
+          success: response?.success ?? false,
+          noDefaultSet: response?.noDefaultSet ?? false,
+        })
+      )
+      .catch((error) => {
+        console.error("BeHeld: failed to save to default folder", error);
+        sendResponse({ success: false, noDefaultSet: false });
+      });
+    return true;
+  }
+
   if (message.type === "DELETE_SCREENSHOT") {
     relayToOffscreen<{ success?: boolean }>("OFFSCREEN_DELETE_SCREENSHOT", {
       folderName: message.folderName,
@@ -279,6 +366,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => {
         console.error("BeHeld: failed to delete screenshot", error);
         sendResponse({ success: false });
+      });
+    return true;
+  }
+
+  if (message.type === "GET_SCREENSHOT") {
+    relayToOffscreen<{ success?: boolean; dataUrl?: string | null }>(
+      "OFFSCREEN_GET_SCREENSHOT",
+      { folderName: message.folderName, filename: message.filename }
+    )
+      .then((response) =>
+        sendResponse({ success: response?.success ?? false, dataUrl: response?.dataUrl ?? null })
+      )
+      .catch((error) => {
+        console.error("BeHeld: failed to get screenshot", error);
+        sendResponse({ success: false, dataUrl: null });
       });
     return true;
   }

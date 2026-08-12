@@ -54,13 +54,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "OFFSCREEN_GET_FOLDER_SUMMARY") {
-    getFolderSummary().then((counts) => {
-      sendResponse({ counts });
-    });
-    return true;
-  }
-
   if (message.type === "OFFSCREEN_GET_FOLDER_CONTENTS") {
     getFolderContents(message.folderName, message.includeOlder ?? false).then((result) => {
       sendResponse(result);
@@ -89,9 +82,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "OFFSCREEN_GET_SCREENSHOT") {
+    getScreenshot(message.folderName, message.filename).then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
   if (message.type === "OFFSCREEN_EXPORT_PDF") {
     exportPdf(message.dataUrl).then((pdfDataUrl) => {
       sendResponse({ pdfDataUrl });
+    });
+    return true;
+  }
+
+  if (message.type === "OFFSCREEN_SAVE_TO_DEFAULT_FOLDER") {
+    saveToDefaultFolder(message.dataUrl).then((result) => {
+      sendResponse(result);
     });
     return true;
   }
@@ -141,6 +148,48 @@ async function handleSave(folderName: string, dataUrl: string): Promise<boolean>
   } catch (error) {
     console.error("Offscreen save error:", error);
     return false;
+  }
+}
+
+interface SaveToDefaultFolderResult {
+  success: boolean;
+  noDefaultSet?: boolean;
+}
+
+async function saveToDefaultFolder(dataUrl: string): Promise<SaveToDefaultFolderResult> {
+  try {
+    const defaultHandle = await get<FileSystemDirectoryHandle>("beheld-default-folder-handle");
+    if (!defaultHandle) {
+      return { success: false, noDefaultSet: true };
+    }
+
+    const permission = await (defaultHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") {
+      console.error("Offscreen: default folder permission denied");
+      return { success: false };
+    }
+
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 19);
+    const filename = `screenshot-${timestamp}.png`;
+
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+
+    const fileHandle = await defaultHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+
+    return { success: true };
+  } catch (error) {
+    console.error("Offscreen save to default folder error:", error);
+    return { success: false };
   }
 }
 
@@ -246,31 +295,6 @@ interface FolderContentsResult {
 
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-async function getFolderSummary(): Promise<Record<string, number>> {
-  const counts: Record<string, number> = {};
-  try {
-    const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
-    const folders = await get<string[]>("beheld-folders") ?? ["Temp"];
-    if (!rootHandle) return counts;
-
-    for (const folderName of folders) {
-      try {
-        const folderHandle = await rootHandle.getDirectoryHandle(folderName);
-        let count = 0;
-        for await (const [, handle] of folderHandle.entries()) {
-          if (handle.kind === "file") count++;
-        }
-        counts[folderName] = count;
-      } catch {
-        counts[folderName] = 0;
-      }
-    }
-  } catch (error) {
-    console.error("Offscreen folder summary error:", error);
-  }
-  return counts;
-}
-
 const THUMBNAIL_MAX_SIZE = 120;
 
 function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
@@ -371,6 +395,49 @@ async function deleteScreenshot(folderName: string, filename: string): Promise<b
   } catch (error) {
     console.error("Offscreen delete screenshot error:", error);
     return false;
+  }
+}
+
+interface GetScreenshotResult {
+  success: boolean;
+  dataUrl: string | null;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function getScreenshot(folderName: string, filename: string): Promise<GetScreenshotResult> {
+  try {
+    const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
+    if (!rootHandle) {
+      console.error("Offscreen: no root handle found");
+      return { success: false, dataUrl: null };
+    }
+
+    const permission = await (rootHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") {
+      console.error("Offscreen: permission denied");
+      return { success: false, dataUrl: null };
+    }
+
+    const folderHandle = await rootHandle.getDirectoryHandle(folderName);
+    const fileHandle = await folderHandle.getFileHandle(filename);
+    const file = await fileHandle.getFile();
+    const dataUrl = await blobToDataUrl(file);
+
+    return { success: true, dataUrl };
+  } catch (error) {
+    console.error("Offscreen get screenshot error:", error);
+    return { success: false, dataUrl: null };
   }
 }
 

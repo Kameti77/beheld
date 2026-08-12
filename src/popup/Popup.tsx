@@ -6,11 +6,16 @@ function Popup() {
   const [viewMode, setViewMode] = useState<"main" | "settings">("main");
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [defaultFolderHandle, setDefaultFolderHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [showDefaultFolderConfirmation, setShowDefaultFolderConfirmation] = useState(false);
 
   useEffect(() => {
     get("beheld-root-handle").then((handle) => {
       setIsReady(handle != null);
       setRootHandle(handle ?? null);
+    });
+    get("beheld-default-folder-handle").then((handle) => {
+      setDefaultFolderHandle(handle ?? null);
     });
   }, []);
 
@@ -37,9 +42,28 @@ function Popup() {
     }
   };
 
+  const handleChooseDefaultFolder = async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
+      await set("beheld-default-folder-handle", handle);
+      setDefaultFolderHandle(handle);
+      setShowDefaultFolderConfirmation(true);
+      setTimeout(() => setShowDefaultFolderConfirmation(false), 1500);
+    } catch {
+      console.log("Default folder picker cancelled");
+    }
+  };
+
   const handleCapture = () => {
     chrome.runtime.sendMessage(
       { type: "CAPTURE_SCREENSHOT" },
+      () => { window.close(); }
+    );
+  };
+
+  const handleCaptureFullPage = () => {
+    chrome.runtime.sendMessage(
+      { type: "CAPTURE_FULL_PAGE" },
       () => { window.close(); }
     );
   };
@@ -186,8 +210,59 @@ function Popup() {
             </span>
           ))}
         </div>
-        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 0, marginBottom: 0, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 0, marginBottom: 24, lineHeight: 1.5 }}>
           Press this anywhere in Chrome to capture the current tab instantly, without opening the popup.
+        </p>
+
+        <p style={{ fontSize: 13, marginBottom: 8 }}>Default quick-save folder</p>
+        <div
+          style={{
+            background: "#1A2E1A",
+            color: "#4ADE80",
+            fontFamily: "monospace",
+            fontSize: 13,
+            border: "1px solid #2d4a2d",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            wordBreak: "break-all",
+          }}
+        >
+          {defaultFolderHandle ? `📁 ${defaultFolderHandle.name}` : "Not set"}
+        </div>
+        <button
+          onClick={handleChooseDefaultFolder}
+          style={{
+            background: "#4ADE80",
+            color: "#1A2E1A",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 20px",
+            fontSize: 14,
+            cursor: "pointer",
+            width: "100%",
+          }}
+        >
+          {defaultFolderHandle ? "Change folder" : "Choose folder"}
+        </button>
+        {showDefaultFolderConfirmation && (
+          <p
+            style={{
+              fontSize: 12,
+              color: "#4ADE80",
+              background: "#1A2E1A",
+              border: "1px solid #2d4a2d",
+              padding: "6px 8px",
+              borderRadius: 6,
+              marginTop: 8,
+              marginBottom: 0,
+            }}
+          >
+            ✓ Default folder updated
+          </p>
+        )}
+        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
+          BeHeld will quick-save screenshots straight to this folder without asking each time.
         </p>
       </div>
     );
@@ -219,6 +294,9 @@ function Popup() {
       <p style={{ fontSize: 11, color: "#555", marginTop: 0, marginBottom: 8 }}>
         or press Ctrl+Shift+S anywhere
       </p>
+      <button onClick={handleCaptureFullPage} style={{ width: "100%", marginBottom: 8 }}>
+        Full-Page Screenshot
+      </button>
       <button onClick={handleOpenLibrary} style={{ width: "100%" }}>
         Library & Clipboard
       </button>
