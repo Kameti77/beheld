@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import {
   notifyClipboardListeners,
@@ -7,6 +7,22 @@ import {
   ClipboardList,
 } from "./ClipboardPanel";
 import { LibraryPanel } from "./LibraryPanel";
+import { color, radius, font, shadow } from "../design/tokens";
+import { injectDesignSystemStyles } from "../design/globalStyles";
+import {
+  IconFolder,
+  IconCopy,
+  IconClipboard,
+  IconCrop,
+  IconBrowse,
+  IconPdf,
+  IconTrash,
+  IconClose,
+  IconCheck,
+  IconError,
+  IconPlus,
+} from "../design/icons";
+import { renderToStaticMarkup } from "react-dom/server";
 
 // ── TYPES ──────────────────────────────────────────────────
 type StripState = "prompt" | "folders" | "dismissed";
@@ -98,6 +114,13 @@ async function saveDataUrlToDirectory(
   await writable.close();
 }
 
+// Renders a design-system icon to a static SVG markup string so the vanilla-DOM
+// crop overlay (deliberately not React, see openCropOverlay below) can still use
+// the exact same icon set as the rest of the product instead of a one-off glyph.
+function iconMarkup(icon: ReactElement): string {
+  return renderToStaticMarkup(icon);
+}
+
 type CropCorner = "nw" | "ne" | "sw" | "se";
 type CropDragMode = "none" | "drawing" | "moving" | "resizing";
 
@@ -109,6 +132,8 @@ let closeActiveCropOverlay: (() => void) | null = null;
 // Vanilla-DOM crop overlay: mounted straight into document.body (mirrors the
 // remove-before-create pattern used by #beheld-strip-root / #beheld-flash-overlay),
 // independent of React so its own drag tracking can't step on the strip's state.
+// Uses the shared "bh-btn" classes and design tokens so it reads as part of the
+// same product as everything else, even though it isn't a React tree.
 function openCropOverlay(
   imageDataUrl: string,
   onConfirm: (croppedDataUrl: string) => void,
@@ -128,7 +153,7 @@ function openCropOverlay(
     left: "0",
     width: "100vw",
     height: "100vh",
-    background: "rgba(0, 0, 0, 0.5)",
+    background: "rgba(10, 14, 11, 0.55)",
     zIndex: "2147483000",
     cursor: "crosshair",
     pointerEvents: "auto",
@@ -138,7 +163,7 @@ function openCropOverlay(
   const rectEl = document.createElement("div");
   Object.assign(rectEl.style, {
     position: "absolute",
-    border: "2px solid #4ADE80",
+    border: `2px solid ${color.brand}`,
     background: "rgba(74, 222, 128, 0.08)",
     boxSizing: "border-box",
     display: "none",
@@ -149,12 +174,12 @@ function openCropOverlay(
   const tooltip = document.createElement("div");
   Object.assign(tooltip.style, {
     position: "absolute",
-    background: "#1A2E1A",
-    color: "#4ADE80",
+    background: color.bgElevated,
+    color: color.textPrimary,
     fontSize: "11px",
-    fontFamily: "sans-serif",
-    padding: "3px 6px",
-    borderRadius: "4px",
+    fontFamily: font.family,
+    padding: "3px 7px",
+    borderRadius: `${radius.sm}px`,
     pointerEvents: "none",
     whiteSpace: "nowrap",
     display: "none",
@@ -170,8 +195,8 @@ function openCropOverlay(
       position: "absolute",
       width: `${HANDLE_SIZE}px`,
       height: `${HANDLE_SIZE}px`,
-      background: "#4ADE80",
-      border: "1px solid #1A2E1A",
+      background: color.brand,
+      border: `1px solid ${color.bgBase}`,
       borderRadius: "2px",
       display: "none",
       cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
@@ -188,39 +213,24 @@ function openCropOverlay(
     transform: "translateX(-50%)",
     display: "none",
     gap: "8px",
-    background: "#1f361f",
-    border: "1px solid #2d4a2d",
-    borderRadius: "8px",
+    background: color.bgSurface,
+    border: `1px solid ${color.border}`,
+    borderRadius: `${radius.md}px`,
     padding: "8px",
+    boxShadow: shadow.lg,
     zIndex: "2147483001",
   });
   root.appendChild(toolbar);
 
   const confirmBtn = document.createElement("button");
   confirmBtn.type = "button";
-  confirmBtn.textContent = "Confirm crop";
-  Object.assign(confirmBtn.style, {
-    background: "#2d4a2d",
-    border: "1px solid #4ADE80",
-    borderRadius: "6px",
-    padding: "8px 14px",
-    color: "#4ADE80",
-    fontSize: "13px",
-    cursor: "pointer",
-  });
+  confirmBtn.className = "bh-btn bh-btn--primary bh-btn--sm";
+  confirmBtn.innerHTML = `${iconMarkup(<IconCheck size={14} />)}<span>Confirm crop</span>`;
 
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
+  cancelBtn.className = "bh-btn bh-btn--tertiary bh-btn--sm";
   cancelBtn.textContent = "Cancel";
-  Object.assign(cancelBtn.style, {
-    background: "transparent",
-    border: "1px solid #5a7a5a",
-    borderRadius: "6px",
-    padding: "8px 14px",
-    color: "#c4e8c4",
-    fontSize: "13px",
-    cursor: "pointer",
-  });
 
   toolbar.appendChild(confirmBtn);
   toolbar.appendChild(cancelBtn);
@@ -270,10 +280,10 @@ function openCropOverlay(
       handle.style.display = showHandles ? "block" : "none";
     });
 
-    tooltip.textContent = `${Math.round(selW)} x ${Math.round(selH)}`;
+    tooltip.textContent = `${Math.round(selW)} × ${Math.round(selH)}`;
     tooltip.style.display = selW > 0 && selH > 0 ? "block" : "none";
     tooltip.style.left = `${selX}px`;
-    tooltip.style.top = `${Math.max(0, selY - 22)}px`;
+    tooltip.style.top = `${Math.max(0, selY - 26)}px`;
 
     toolbar.style.display = showHandles ? "flex" : "none";
   }
@@ -404,6 +414,26 @@ function closeCropOverlayIfOpen() {
   } else {
     document.getElementById("beheld-crop-root")?.remove();
   }
+}
+
+// ── SHARED SMALL UI PIECES ──────────────────────────────────
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: ReactElement;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button className="bh-menu-item" onClick={onClick} disabled={disabled}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
 }
 
 // ── STRIP COMPONENT ────────────────────────────────────────
@@ -650,65 +680,75 @@ function DecisionStrip({
     );
   };
 
-  const renderFolderRow = (folder: string) => (
-    <div key={folder} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-      {confirmingDeleteFolder === folder ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "100%" }}>
-          <span style={{ flex: 1, fontSize: "11px", color: "#c4e8c4" }}>Delete "{folder}"?</span>
-          <button
-            onClick={() => handleDeleteFolder(folder)}
-            style={{ border: "none", background: "transparent", color: "#e2685f", cursor: "pointer", fontSize: "11px" }}
-          >
-            Yes
-          </button>
-          <button
-            onClick={() => setConfirmingDeleteFolder(null)}
-            style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "11px" }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <>
-          <button
-            onClick={() => {
-              chrome.runtime.sendMessage(
-                { type: "SAVE_SCREENSHOT", folderName: folder, dataUrl: workingDataUrl },
-                (response) => {
-                  if (response?.success) {
-                    showConfirmation("success", `Saved to ${folder}`);
-                  } else {
-                    console.error(`BeHeld: failed to save to ${folder}`, chrome.runtime.lastError);
-                    showConfirmation("error", "Something went wrong");
+  const renderFolderRow = (folder: string) => {
+    const isTemp = folder === "Temp";
+    return (
+      <div key={folder} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+        {confirmingDeleteFolder === folder ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "100%" }}>
+            <span style={{ flex: 1, fontSize: font.size.xs, color: color.textPrimary }}>
+              Delete "{folder}"?
+            </span>
+            <button
+              onClick={() => handleDeleteFolder(folder)}
+              style={{ border: "none", background: "transparent", color: color.error, cursor: "pointer", fontSize: font.size.xs, fontWeight: font.weight.medium }}
+            >
+              Yes
+            </button>
+            <button
+              onClick={() => setConfirmingDeleteFolder(null)}
+              style={{ border: "none", background: "transparent", color: color.textMuted, cursor: "pointer", fontSize: font.size.xs }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <>
+            <button
+              className="bh-row"
+              onClick={() => {
+                chrome.runtime.sendMessage(
+                  { type: "SAVE_SCREENSHOT", folderName: folder, dataUrl: workingDataUrl },
+                  (response) => {
+                    if (response?.success) {
+                      showConfirmation("success", `Saved to ${folder}`);
+                    } else {
+                      console.error(`BeHeld: failed to save to ${folder}`, chrome.runtime.lastError);
+                      showConfirmation("error", "Something went wrong");
+                    }
                   }
-                }
-              );
-            }}
-            style={{
-              flex: 1,
-              background: folder === "Temp" ? "#2a2008" : "#2d4a2d",
-              border: folder === "Temp" ? "1px solid #6a4e0a" : "1px solid #3a5e3a",
-              borderRadius: "6px",
-              padding: "8px 12px",
-              color: folder === "Temp" ? "#F59E0B" : "#c4e8c4",
-              fontSize: "13px",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            📁 {folder}
-          </button>
-          <button
-            onClick={() => setConfirmingDeleteFolder(folder)}
-            title={`Delete ${folder}`}
-            style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "12px", padding: "2px" }}
-          >
-            🗑
-          </button>
-        </>
-      )}
-    </div>
-  );
+                );
+              }}
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: color.bgSurface,
+                border: `1px solid ${color.border}`,
+                borderRadius: `${radius.sm}px`,
+                padding: "8px 10px",
+                color: color.textPrimary,
+                fontSize: font.size.base,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <IconFolder size={14} color={isTemp ? color.warning : color.brand} />
+              <span>{folder}</span>
+            </button>
+            <button
+              className="bh-icon-btn bh-icon-btn--danger"
+              onClick={() => setConfirmingDeleteFolder(folder)}
+              title={`Delete ${folder}`}
+            >
+              <IconTrash size={13} />
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -722,37 +762,43 @@ function DecisionStrip({
         alignItems: "flex-end",
         opacity: fading ? 0 : 1,
         transition: "opacity 0.6s ease",
+        fontFamily: font.family,
       }}
     >
       {confirmation ? (
         <div
           style={{
-            background: "#1A2E1A",
-            color: confirmation.kind === "success" ? "#4ADE80" : "#F59E0B",
-            borderRadius: "6px 0 0 6px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            background: color.bgSurface,
+            color: confirmation.kind === "success" ? color.success : color.error,
+            borderRadius: `${radius.md}px 0 0 ${radius.md}px`,
             padding: "10px 14px",
-            fontSize: "13px",
+            fontSize: font.size.base,
+            boxShadow: shadow.md,
             whiteSpace: "nowrap",
             opacity: confirmationFading ? 0 : 1,
             transition: "opacity 0.4s ease",
           }}
         >
-          {confirmation.kind === "success" ? "✓" : "✕"} {confirmation.message}
+          {confirmation.kind === "success" ? <IconCheck size={15} /> : <IconError size={15} />}
+          {confirmation.message}
         </div>
       ) : (
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {state === "prompt" && (
           <div
             style={{
-              background: "#1e2a1e",
-              color: "#c8e8c8",
+              background: color.bgSurface,
+              color: color.textPrimary,
               padding: "10px 14px",
-              borderRadius: "8px",
-              fontSize: "13px",
+              borderRadius: `${radius.md}px`,
+              fontSize: font.size.base,
               lineHeight: "1.5",
               marginRight: "8px",
               marginTop: "10px",
-              border: "1px solid #2d4a2d",
+              boxShadow: shadow.md,
               position: "relative",
               whiteSpace: "nowrap",
             }}
@@ -768,7 +814,7 @@ function DecisionStrip({
                 height: 0,
                 borderTop: "6px solid transparent",
                 borderBottom: "6px solid transparent",
-                borderLeft: "8px solid #1e2a1e",
+                borderLeft: `8px solid ${color.bgSurface}`,
               }}
             />
           </div>
@@ -777,41 +823,29 @@ function DecisionStrip({
         {state === "folders" && dataUrl && (
           <div
             style={{
-              background: "#1f361f",
-              border: "1px solid #2d4a2d",
-              borderRadius: "8px 0 0 8px",
-              padding: "12px",
+              background: color.bgSurface,
+              borderRadius: `${radius.lg}px 0 0 ${radius.lg}px`,
+              padding: "10px",
               display: "flex",
               flexDirection: "column",
-              gap: "8px",
-              minWidth: "160px",
+              gap: "4px",
+              minWidth: "180px",
+              boxShadow: shadow.md,
             }}
           >
-            <div style={{ fontSize: "11px", color: "#5a7a5a", marginBottom: "4px" }}>
+            <div style={{ fontSize: font.size.xs, color: color.textMuted, padding: "2px 6px 6px" }}>
               Where should this go?
             </div>
 
-            {regularFolders.map(renderFolderRow)}
-            {hasTemp && renderFolderRow("Temp")}
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "4px" }}>
+              {regularFolders.map(renderFolderRow)}
+              {hasTemp && renderFolderRow("Temp")}
+            </div>
 
             {!creatingFolder ? (
-              <button
-                onClick={() => setCreatingFolder(true)}
-                style={{
-                  background: "transparent",
-                  border: "1px dashed #3a5e3a",
-                  borderRadius: "6px",
-                  padding: "8px 12px",
-                  color: "#4ADE80",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                + New folder
-              </button>
+              <MenuItem icon={<IconPlus size={15} />} label="New folder" onClick={() => setCreatingFolder(true)} />
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "2px 10px 6px" }}>
                 <input
                   autoFocus
                   type="text"
@@ -839,93 +873,38 @@ function DecisionStrip({
                       setNewFolderName("");
                     }
                   }}
-                  placeholder="Folder name..."
+                  placeholder="Folder name…"
                   style={{
-                    background: "#1a2e1a",
-                    border: "1px solid #4ADE80",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    color: "#c4e8c4",
-                    fontSize: "13px",
+                    background: color.bgElevated,
+                    border: `1px solid ${color.borderBrand}`,
+                    borderRadius: `${radius.sm}px`,
+                    padding: "8px 10px",
+                    color: color.textPrimary,
+                    fontSize: font.size.base,
+                    fontFamily: font.family,
                     outline: "none",
                   }}
                 />
-                <div style={{ fontSize: "11px", color: "#5a7a5a" }}>
+                <div style={{ fontSize: font.size.xs, color: color.textMuted }}>
                   Press Enter to save · Esc to cancel
                 </div>
               </div>
             )}
 
-            <button
-              onClick={() => setCropping(true)}
-              style={{
-                background: "transparent",
-                border: "1px dashed #3a5e3a",
-                borderRadius: "6px",
-                padding: "8px 12px",
-                color: "#4ADE80",
-                fontSize: "13px",
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              ✂ Crop screenshot
-            </button>
+            <div style={{ height: 1, background: color.border, margin: "4px 6px" }} />
 
-            <button
-              onClick={handleBrowseFolder}
-              disabled={browsing}
-              style={{
-                background: "transparent",
-                border: "1px dashed #3a5e3a",
-                borderRadius: "6px",
-                padding: "8px 12px",
-                color: "#4ADE80",
-                fontSize: "13px",
-                cursor: browsing ? "default" : "pointer",
-                textAlign: "left",
-                opacity: browsing ? 0.6 : 1,
-              }}
-            >
-              🗂 Browse...
-            </button>
+            <MenuItem icon={<IconCrop size={15} />} label="Crop screenshot" onClick={() => setCropping(true)} />
+            <MenuItem icon={<IconBrowse size={15} />} label="Browse…" onClick={handleBrowseFolder} disabled={browsing} />
+            <MenuItem icon={<IconPdf size={15} />} label="Save as PDF" onClick={handleExportPdf} disabled={exportingPdf} />
 
-            <button
-              onClick={handleExportPdf}
-              disabled={exportingPdf}
-              style={{
-                background: "transparent",
-                border: "1px dashed #3a5e3a",
-                borderRadius: "6px",
-                padding: "8px 12px",
-                color: "#4ADE80",
-                fontSize: "13px",
-                cursor: exportingPdf ? "default" : "pointer",
-                textAlign: "left",
-                opacity: exportingPdf ? 0.6 : 1,
-              }}
-            >
-              📄 Save as PDF
-            </button>
+            <div style={{ height: 1, background: color.border, margin: "4px 6px" }} />
 
-            <button
-              onClick={handleSaveToDefaultFolder}
-              style={{
-                background: "transparent",
-                border: "1px solid #2d4a2d",
-                borderRadius: "6px",
-                padding: "8px 12px",
-                color: "#6a8a6a",
-                fontSize: "12px",
-                cursor: "pointer",
-                textAlign: "left",
-                display: "flex",
-                flexDirection: "column",
-                gap: "2px",
-              }}
-            >
-              <span>Save to default folder</span>
-              <span style={{ fontSize: "10px", color: "#4a6a4a" }}>
+            <button className="bh-menu-item" onClick={handleSaveToDefaultFolder} style={{ flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <IconFolder size={15} />
+                Save to default folder
+              </span>
+              <span style={{ fontSize: font.size.xs, color: color.textMuted, paddingLeft: "23px" }}>
                 Quick-saves to the folder you chose once in Settings
               </span>
             </button>
@@ -937,56 +916,50 @@ function DecisionStrip({
             if (dataUrl && state === "dismissed") setState("prompt");
           }}
           style={{
-            background: "#1A2E1A",
-            borderRadius: "6px 0 0 6px",
+            background: color.bgElevated,
+            borderRadius: `${radius.md}px 0 0 ${radius.md}px`,
             width: "36px",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             padding: "10px 0",
             gap: "12px",
+            boxShadow: shadow.md,
             cursor: dataUrl && state === "dismissed" ? "pointer" : "default",
           }}
         >
           {dataUrl && (
-            <div
+            <button
+              className="bh-icon-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 setState("folders");
               }}
-              style={{
-                color: "#4ADE80",
-                fontSize: "18px",
-                cursor: "pointer",
-                lineHeight: 1,
-              }}
               title="Save to folder"
+              style={{ color: color.brand }}
             >
-              📁
-            </div>
+              <IconFolder size={17} />
+            </button>
           )}
 
           {dataUrl && (
-            <div
+            <button
+              className="bh-icon-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 copyImageToClipboard(workingDataUrl!).then(() => {
                   showConfirmation("success", "Copied to clipboard");
                 });
               }}
-              style={{
-                color: "#4ADE80",
-                fontSize: "18px",
-                cursor: "pointer",
-                lineHeight: 1,
-              }}
               title="Copy to clipboard"
+              style={{ color: color.brand }}
             >
-              📋
-            </div>
+              <IconCopy size={17} />
+            </button>
           )}
 
-          <div
+          <button
+            className="bh-icon-btn"
             onClick={(e) => {
               e.stopPropagation();
               if (clipboardOpen) {
@@ -995,23 +968,11 @@ function DecisionStrip({
                 openClipboard();
               }
             }}
-            style={{
-              color: "#4ADE80",
-              fontSize: "18px",
-              cursor: "pointer",
-              lineHeight: 1,
-              background: clipboardOpen ? "#243b24" : "transparent",
-              borderRadius: "4px",
-              padding: "2px",
-            }}
             title="Clipboard history"
+            style={{ color: color.brand, background: clipboardOpen ? color.bgHover : "transparent" }}
           >
-            📑
-          </div>
-
-          <div style={{ color: "#3a5a3a", fontSize: "10px", letterSpacing: "1px" }}>
-            ···
-          </div>
+            <IconClipboard size={17} />
+          </button>
         </div>
       </div>
       )}
@@ -1019,26 +980,22 @@ function DecisionStrip({
       {clipboardOpen && (
         <div
           style={{
-            width: "140px",
-            background: "#1f361f",
-            border: "1px solid #2d4a2d",
-            borderRadius: "0 0 0 8px",
-            padding: "7px",
+            width: "150px",
+            background: color.bgSurface,
+            borderRadius: `0 0 0 ${radius.md}px`,
+            padding: "8px",
+            boxShadow: shadow.md,
             display: "flex",
             flexDirection: "column",
             gap: "5px",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1px" }}>
-            <span style={{ fontSize: "9px", color: "#8fae8f", fontWeight: 500, letterSpacing: "0.3px" }}>
-              CLIPBOARD
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px" }}>
+            <span style={{ fontSize: "9px", color: color.textMuted, fontWeight: font.weight.medium, letterSpacing: "0.4px", textTransform: "uppercase" }}>
+              Clipboard
             </span>
-            <button
-              onClick={() => setClipboardOpen(false)}
-              title="Close"
-              style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "11px", lineHeight: 1 }}
-            >
-              ✕
+            <button className="bh-icon-btn" onClick={() => setClipboardOpen(false)} title="Close" style={{ width: 20, height: 20 }}>
+              <IconClose size={12} />
             </button>
           </div>
 
@@ -1195,6 +1152,7 @@ async function runFullPageCapture() {
 
 // ── MOUNT ──────────────────────────────────────────────────
 function mountStrip(dataUrl: string | null, folders: string[], startWithClipboardOpen?: boolean) {
+  injectDesignSystemStyles();
   closeCropOverlayIfOpen();
 
   const existing = document.getElementById("beheld-strip-root");
@@ -1210,6 +1168,8 @@ function mountStrip(dataUrl: string | null, folders: string[], startWithClipboar
 }
 
 function mountLibrary(folders: string[]) {
+  injectDesignSystemStyles();
+
   const existing = document.getElementById("beheld-library-root");
   if (existing) existing.remove();
 

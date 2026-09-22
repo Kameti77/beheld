@@ -1,5 +1,112 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { get, set } from "idb-keyval";
+import { color, space, radius, font } from "../design/tokens";
+import { Button } from "../design/Button";
+import {
+  IconCamera,
+  IconFullPage,
+  IconLibrary,
+  IconSettings,
+  IconBack,
+  IconCheck,
+  IconFolder,
+} from "../design/icons";
+
+const POPUP_WIDTH = 320;
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p
+      style={{
+        fontSize: font.size.sm,
+        fontWeight: font.weight.medium,
+        color: color.textSecondary,
+        margin: 0,
+        marginBottom: space.sm,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function Caption({ children }: { children: ReactNode }) {
+  return (
+    <p
+      style={{
+        fontSize: font.size.xs,
+        color: color.textMuted,
+        lineHeight: 1.5,
+        margin: 0,
+        marginTop: space.sm,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function FolderChip({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: space.sm,
+        background: color.bgElevated,
+        border: `1px solid ${color.border}`,
+        borderRadius: radius.md,
+        padding: `${space.sm}px ${space.md}px`,
+        marginBottom: space.sm,
+      }}
+    >
+      <IconFolder size={14} color={color.brand} />
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          fontSize: font.size.sm,
+          color: color.brand,
+          wordBreak: "break-all",
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function InlineConfirmation({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: space.xs,
+        fontSize: font.size.xs,
+        color: color.success,
+        background: "rgba(74,222,128,0.10)",
+        borderRadius: radius.sm,
+        padding: `${space.xs}px ${space.sm}px`,
+        marginTop: space.sm,
+      }}
+    >
+      <IconCheck size={13} />
+      {text}
+    </div>
+  );
+}
+
+function Divider() {
+  return (
+    <div
+      style={{
+        height: 1,
+        background: color.border,
+        margin: `${space.lg}px 0`,
+      }}
+    />
+  );
+}
 
 function Popup() {
   const [isReady, setIsReady] = useState<boolean | null>(null);
@@ -55,52 +162,57 @@ function Popup() {
   };
 
   const handleCapture = () => {
-    chrome.runtime.sendMessage(
-      { type: "CAPTURE_SCREENSHOT" },
-      () => { window.close(); }
-    );
+    chrome.runtime.sendMessage({ type: "CAPTURE_SCREENSHOT" }, () => { window.close(); });
   };
 
   const handleCaptureFullPage = () => {
-    chrome.runtime.sendMessage(
-      { type: "CAPTURE_FULL_PAGE" },
-      () => { window.close(); }
-    );
+    chrome.runtime.sendMessage({ type: "CAPTURE_FULL_PAGE" }, () => { window.close(); });
   };
 
   const handleOpenLibrary = () => {
-    chrome.runtime.sendMessage(
-      { type: "OPEN_LIBRARY" },
-      () => { window.close(); }
-    );
+    chrome.runtime.sendMessage({ type: "OPEN_LIBRARY" }, () => { window.close(); });
+  };
+
+  const shellStyle = {
+    width: POPUP_WIDTH,
+    padding: space.xl,
+    background: color.bgBase,
+    color: color.textPrimary,
+    fontFamily: font.family,
+    boxSizing: "border-box" as const,
   };
 
   if (isReady === null) {
-    return <div style={{ width: 300, padding: 20 }}>Loading...</div>;
+    return <div style={shellStyle} />;
   }
 
   if (!isReady) {
     return (
-      <div style={{ width: 320, padding: 24 }}>
-        <h1 style={{ fontSize: 20, marginBottom: 8 }}>Welcome to BeHeld</h1>
-        <p style={{ fontSize: 13, color: "#555", marginBottom: 20, lineHeight: 1.6 }}>
-          First, choose where BeHeld should save your screenshots. This is a one-time setup.
-        </p>
-        <button
-          onClick={handlePickFolder}
+      <div style={shellStyle}>
+        <h1
           style={{
-            background: "#1A2E1A",
-            color: "#4ADE80",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 20px",
-            fontSize: 14,
-            cursor: "pointer",
-            width: "100%",
+            fontSize: font.size.xl,
+            fontWeight: font.weight.semibold,
+            margin: 0,
+            marginBottom: space.sm,
           }}
         >
-          Choose Screenshots Folder
-        </button>
+          Welcome to BeHeld
+        </h1>
+        <p
+          style={{
+            fontSize: font.size.base,
+            color: color.textSecondary,
+            lineHeight: 1.6,
+            margin: 0,
+            marginBottom: space.xl,
+          }}
+        >
+          Choose where BeHeld should save your screenshots. This is a one-time setup — you can change it later.
+        </p>
+        <Button variant="primary" fullWidth onClick={handlePickFolder}>
+          Choose screenshots folder
+        </Button>
       </div>
     );
   }
@@ -110,210 +222,147 @@ function Popup() {
     const shortcutKeys = isMac ? ["⌘", "Shift", "S"] : ["Ctrl", "Shift", "S"];
 
     return (
-      <div style={{ width: 300, padding: 20, background: "#1A2E1A", color: "#4ADE80" }}>
+      <div style={shellStyle}>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "24px 1fr 24px",
+            gridTemplateColumns: "28px 1fr 28px",
             alignItems: "center",
-            marginBottom: 20,
+            marginBottom: space.xl,
           }}
         >
           <button
             onClick={() => setViewMode("main")}
             aria-label="Back"
+            className="bh-icon-btn"
+            style={{ justifySelf: "start" }}
+          >
+            <IconBack size={16} />
+          </button>
+          <h1
             style={{
-              background: "none",
-              border: "none",
-              color: "#4ADE80",
-              fontSize: 16,
-              cursor: "pointer",
-              padding: 0,
-              justifySelf: "start",
+              fontSize: font.size.lg,
+              fontWeight: font.weight.semibold,
+              margin: 0,
+              textAlign: "center",
             }}
           >
-            ←
-          </button>
-          <h1 style={{ fontSize: 18, margin: 0, textAlign: "center" }}>Settings</h1>
+            Settings
+          </h1>
           <div />
         </div>
 
-        <p style={{ fontSize: 13, marginBottom: 8 }}>Where your screenshots are saved</p>
-        <div
-          style={{
-            background: "#1A2E1A",
-            color: "#4ADE80",
-            fontFamily: "monospace",
-            fontSize: 13,
-            border: "1px solid #2d4a2d",
-            borderRadius: 8,
-            padding: "10px 12px",
-            marginBottom: 12,
-            wordBreak: "break-all",
-          }}
-        >
-          📁 {rootHandle?.name ?? "Unknown"}
-        </div>
-        <button
-          onClick={handleChangeFolder}
-          style={{
-            background: "#4ADE80",
-            color: "#1A2E1A",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 20px",
-            fontSize: 14,
-            cursor: "pointer",
-            width: "100%",
-          }}
-        >
+        <SectionLabel>Where your screenshots are saved</SectionLabel>
+        <FolderChip label={rootHandle?.name ?? "Unknown"} />
+        <Button variant="secondary" size="sm" fullWidth onClick={handleChangeFolder}>
           Change folder
-        </button>
-        {showConfirmation && (
-          <p
-            style={{
-              fontSize: 12,
-              color: "#4ADE80",
-              background: "#1A2E1A",
-              border: "1px solid #2d4a2d",
-              padding: "6px 8px",
-              borderRadius: 6,
-              marginTop: 8,
-              marginBottom: 0,
-            }}
-          >
-            ✓ Folder updated
-          </p>
-        )}
-        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 8, marginBottom: 24, lineHeight: 1.5 }}>
-          BeHeld saves all screenshots into subfolders inside this location. Changing it does not move your existing screenshots.
-        </p>
+        </Button>
+        {showConfirmation && <InlineConfirmation text="Folder updated" />}
+        <Caption>
+          BeHeld saves every screenshot into subfolders inside this location. Changing it does not move your existing screenshots.
+        </Caption>
 
-        <p style={{ fontSize: 13, marginBottom: 8 }}>Trigger a screenshot</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <Divider />
+
+        <SectionLabel>Default quick-save folder</SectionLabel>
+        <FolderChip label={defaultFolderHandle ? defaultFolderHandle.name : "Not set"} />
+        <Button variant="secondary" size="sm" fullWidth onClick={handleChooseDefaultFolder}>
+          {defaultFolderHandle ? "Change folder" : "Choose folder"}
+        </Button>
+        {showDefaultFolderConfirmation && <InlineConfirmation text="Default folder updated" />}
+        <Caption>
+          BeHeld will quick-save screenshots straight to this folder, without asking each time.
+        </Caption>
+
+        <Divider />
+
+        <SectionLabel>Trigger a screenshot</SectionLabel>
+        <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
           {shortcutKeys.map((key, i) => (
-            <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
               <span
                 style={{
-                  background: "#1A2E1A",
-                  color: "#4ADE80",
-                  border: "1px solid #2d4a2d",
-                  borderRadius: 6,
+                  background: color.bgElevated,
+                  color: color.textPrimary,
+                  border: `1px solid ${color.border}`,
+                  borderRadius: radius.sm,
                   padding: "4px 8px",
-                  fontSize: 12,
-                  fontFamily: "monospace",
+                  fontSize: font.size.sm,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
                 }}
               >
                 {key}
               </span>
-              {i < shortcutKeys.length - 1 && <span style={{ fontSize: 12, opacity: 0.65 }}>+</span>}
+              {i < shortcutKeys.length - 1 && (
+                <span style={{ fontSize: font.size.sm, color: color.textMuted }}>+</span>
+              )}
             </span>
           ))}
         </div>
-        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 0, marginBottom: 24, lineHeight: 1.5 }}>
+        <Caption>
           Press this anywhere in Chrome to capture the current tab instantly, without opening the popup.
-        </p>
-
-        <p style={{ fontSize: 13, marginBottom: 8 }}>Default quick-save folder</p>
-        <div
-          style={{
-            background: "#1A2E1A",
-            color: "#4ADE80",
-            fontFamily: "monospace",
-            fontSize: 13,
-            border: "1px solid #2d4a2d",
-            borderRadius: 8,
-            padding: "10px 12px",
-            marginBottom: 12,
-            wordBreak: "break-all",
-          }}
-        >
-          {defaultFolderHandle ? `📁 ${defaultFolderHandle.name}` : "Not set"}
-        </div>
-        <button
-          onClick={handleChooseDefaultFolder}
-          style={{
-            background: "#4ADE80",
-            color: "#1A2E1A",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 20px",
-            fontSize: 14,
-            cursor: "pointer",
-            width: "100%",
-          }}
-        >
-          {defaultFolderHandle ? "Change folder" : "Choose folder"}
-        </button>
-        {showDefaultFolderConfirmation && (
-          <p
-            style={{
-              fontSize: 12,
-              color: "#4ADE80",
-              background: "#1A2E1A",
-              border: "1px solid #2d4a2d",
-              padding: "6px 8px",
-              borderRadius: 6,
-              marginTop: 8,
-              marginBottom: 0,
-            }}
-          >
-            ✓ Default folder updated
-          </p>
-        )}
-        <p style={{ fontSize: 11, color: "#4ADE80", opacity: 0.65, marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
-          BeHeld will quick-save screenshots straight to this folder without asking each time.
-        </p>
+        </Caption>
       </div>
     );
   }
 
   return (
-    <div style={{ width: 300, padding: 20, position: "relative" }}>
+    <div style={{ ...shellStyle, position: "relative" }}>
       <button
         onClick={() => setViewMode("settings")}
         aria-label="Settings"
+        className="bh-icon-btn"
+        style={{ position: "absolute", top: space.lg, right: space.lg }}
+      >
+        <IconSettings size={16} />
+      </button>
+
+      <h1
         style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          background: "none",
-          border: "none",
-          fontSize: 16,
-          cursor: "pointer",
-          padding: 0,
+          fontSize: font.size.lg,
+          fontWeight: font.weight.semibold,
+          margin: 0,
+          marginBottom: 2,
         }}
       >
-        ⚙️
-      </button>
-      <h1>BeHeld</h1>
-      <p>Hold what matters. Let go of the rest.</p>
-      <button onClick={handleCapture} style={{ width: "100%", marginBottom: 4 }}>
-        Take Screenshot
-      </button>
-      <p style={{ fontSize: 11, color: "#555", marginTop: 0, marginBottom: 8 }}>
-        or press Ctrl+Shift+S anywhere
+        BeHeld
+      </h1>
+      <p
+        style={{
+          fontSize: font.size.sm,
+          color: color.textSecondary,
+          margin: 0,
+          marginBottom: space.xl,
+        }}
+      >
+        Hold what matters. Let go of the rest.
       </p>
-      <button onClick={handleCaptureFullPage} style={{ width: "100%", marginBottom: 8 }}>
-        Full-Page Screenshot
-      </button>
-      <button onClick={handleOpenLibrary} style={{ width: "100%" }}>
-        Library & Clipboard
-      </button>
-      {showConfirmation && (
-        <p
-          style={{
-            fontSize: 12,
-            color: "#4ADE80",
-            background: "#1A2E1A",
-            padding: "6px 8px",
-            borderRadius: 6,
-            marginTop: 8,
-          }}
-        >
-          ✓ Root folder updated
-        </p>
-      )}
+
+      <Button variant="primary" fullWidth icon={<IconCamera size={16} />} onClick={handleCapture}>
+        Take screenshot
+      </Button>
+      <p
+        style={{
+          fontSize: font.size.xs,
+          color: color.textMuted,
+          margin: 0,
+          marginTop: space.sm,
+          marginBottom: space.lg,
+        }}
+      >
+        or press {navigator.platform.includes("Mac") ? "⌘+Shift+S" : "Ctrl+Shift+S"} anywhere
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+        <Button variant="secondary" fullWidth icon={<IconFullPage size={16} />} onClick={handleCaptureFullPage}>
+          Full-page screenshot
+        </Button>
+        <Button variant="secondary" fullWidth icon={<IconLibrary size={16} />} onClick={handleOpenLibrary}>
+          Library &amp; clipboard
+        </Button>
+      </div>
+
+      {showConfirmation && <InlineConfirmation text="Root folder updated" />}
     </div>
   );
 }

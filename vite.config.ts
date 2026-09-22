@@ -10,7 +10,7 @@ export default defineConfig({
     react(),
     webExtension({
       manifest: () => readJsonFile("manifest.json"),
-      additionalInputs: ["src/offscreen/offscreen.html"],
+      additionalInputs: ["src/offscreen/offscreen.html", "src/content/index.tsx"],
     }),
   ],
 });

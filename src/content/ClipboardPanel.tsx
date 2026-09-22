@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { color, font, radius, space } from "../design/tokens";
+import { IconClipboard, IconImage, IconTrash } from "../design/icons";
 
-// ── TYPES ──────────────────────────────────────────────────
 export interface ClipboardEntry {
   id: string;
   itemType: "text" | "image";
@@ -8,9 +9,6 @@ export interface ClipboardEntry {
   timestamp: number;
 }
 
-// ── LIVE CLIPBOARD UPDATES ─────────────────────────────────
-// Lets any mounted panel react immediately when new items are recorded,
-// instead of requiring the panel to be closed and reopened.
 type ClipboardListener = (items: ClipboardEntry[]) => void;
 export const clipboardListeners = new Set<ClipboardListener>();
 
@@ -39,9 +37,6 @@ export async function copyImageToClipboard(dataUrl: string) {
   }
 }
 
-// ── SHARED CLIPBOARD ITEMS HOOK ─────────────────────────────
-// Fetches on demand (call load()) and stays live-updated via clipboardListeners,
-// so DecisionStrip's and LibraryPanel's clipboard tabs never drift out of sync.
 export function useClipboardItems() {
   const [items, setItems] = useState<ClipboardEntry[]>([]);
 
@@ -66,19 +61,13 @@ export function useClipboardItems() {
   };
 
   const recopy = async (item: ClipboardEntry) => {
-    if (item.itemType === "text") {
-      await navigator.clipboard.writeText(item.content);
-    } else {
-      await copyImageToClipboard(item.content);
-    }
+    if (item.itemType === "text") await navigator.clipboard.writeText(item.content);
+    else await copyImageToClipboard(item.content);
   };
 
   return { items, load, deleteItem, recopy };
 }
 
-// ── SHARED CLIPBOARD LIST UI ────────────────────────────────
-// The list-of-items rendering used by both DecisionStrip's clipboard panel and
-// LibraryPanel's Clipboard tab, so there is exactly one implementation.
 export function ClipboardList({
   items,
   onDelete,
@@ -90,78 +79,71 @@ export function ClipboardList({
   onRecopy: (item: ClipboardEntry) => void;
   maxHeight?: string;
 }) {
+  if (items.length === 0) {
+    return (
+      <div style={{ padding: `${space.xl}px ${space.sm}px`, color: color.textMuted, fontSize: font.size.sm, textAlign: "center" }}>
+        Nothing copied yet.
+      </div>
+    );
+  }
+
   return (
-    <>
-      <style>{`
-        .beheld-clip-row .beheld-clip-normal { display: flex; align-items: center; gap: 6px; }
-        .beheld-clip-row .beheld-clip-hover { display: none; align-items: center; gap: 4px; }
-        .beheld-clip-row:hover { background: #2d4a2d; border-color: #4ADE80; }
-        .beheld-clip-row:hover .beheld-clip-normal { display: none; }
-        .beheld-clip-row:hover .beheld-clip-hover { display: flex; }
-      `}</style>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px", maxHeight, overflowY: "auto" }}>
-        {items.length === 0 && (
-          <div style={{ fontSize: "9px", color: "#5a7a5a", padding: "4px 2px" }}>
-            Nothing copied yet.
-          </div>
-        )}
-
-        {items.map((item) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: space.xs, maxHeight, overflowY: "auto", paddingRight: 2 }}>
+      {items.map((item) => {
+        const label = item.itemType === "image" ? "Screenshot" : item.content;
+        return (
           <div
             key={item.id}
-            className="beheld-clip-row"
-            style={{ background: "#243b24", border: "1px solid #2d4a2d", borderRadius: "5px", padding: "4px 6px" }}
+            className="bh-row"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: space.sm,
+              background: color.bgElevated,
+              border: `1px solid ${color.border}`,
+              borderRadius: radius.sm,
+              padding: `${space.sm}px`,
+            }}
           >
-            <div className="beheld-clip-normal">
-              <div
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  borderRadius: "4px",
-                  background: "#0d1a0d",
-                  flex: "0 0 18px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#4ADE80",
-                  fontSize: "10px",
-                }}
-              >
-                {item.itemType === "image" ? "🖼" : "📄"}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: "#c4e8c4", fontSize: "10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {item.itemType === "image" ? "Screenshot" : item.content}
-                </div>
-                <div style={{ color: "#5a7a5a", fontSize: "9px" }}>{formatRelativeTime(item.timestamp)}</div>
-              </div>
+            <div
+              aria-hidden="true"
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: radius.sm,
+                background: color.bgBase,
+                color: color.brand,
+                display: "grid",
+                placeItems: "center",
+                flex: "0 0 26px",
+              }}
+            >
+              {item.itemType === "image" ? <IconImage size={14} /> : <IconClipboard size={14} />}
             </div>
-
-            <div className="beheld-clip-hover">
-              <button
-                onClick={() => onDelete(item.id)}
-                title="Delete"
-                style={{ border: "none", background: "transparent", color: "#e2685f", cursor: "pointer", fontSize: "12px", padding: "2px", lineHeight: 1 }}
-              >
-                🗑
-              </button>
-              <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-                <div style={{ color: "#c4e8c4", fontSize: "10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {item.itemType === "image" ? "Screenshot" : item.content}
-                </div>
-              </div>
-              <button
-                onClick={() => onRecopy(item)}
-                title="Copy again"
-                style={{ border: "none", background: "transparent", color: "#4ADE80", cursor: "pointer", fontSize: "12px", padding: "2px", lineHeight: 1 }}
-              >
-                📋
-              </button>
-            </div>
+            <button
+              onClick={() => onRecopy(item)}
+              title="Copy again"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 0,
+                background: "transparent",
+                padding: 0,
+                color: color.textPrimary,
+                fontFamily: font.family,
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ fontSize: font.size.sm, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+              <div style={{ marginTop: 2, color: color.textMuted, fontSize: font.size.xs }}>{formatRelativeTime(item.timestamp)}</div>
+            </button>
+            <button className="bh-icon-btn bh-icon-btn--danger" onClick={() => onDelete(item.id)} title="Delete">
+              <IconTrash size={14} />
+            </button>
           </div>
-        ))}
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }

@@ -33,6 +33,37 @@ async function getFolders(): Promise<string[]> {
   return response?.folders ?? ["Temp"];
 }
 
+// BeHeld deliberately injects this bundled script only after the user invokes a
+// feature. The first message is a lightweight presence check; if the page has no
+// script yet, inject it with the user's temporary activeTab access and retry.
+// This avoids persistent access to every website while preserving capture, Library,
+// Clipboard, and keyboard-shortcut flows on the current page.
+async function sendToContentScript(tabId: number, message: Record<string, unknown>): Promise<boolean> {
+  const send = () =>
+    new Promise<boolean>((resolve) => {
+      chrome.tabs.sendMessage(tabId, message, () => {
+        // Reading lastError in this callback marks it as handled, avoiding Chrome's
+        // "Unchecked runtime.lastError" warning for pages that cannot host scripts.
+        resolve(!chrome.runtime.lastError);
+      });
+    });
+
+  if (await send()) return true;
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["src/content/index.js"],
+    });
+    return send();
+  } catch (error) {
+    // Chrome internal pages, the Web Store, and restricted URLs cannot accept a
+    // content script. This is expected browser behavior, not an extension error.
+    console.info("BeHeld: this page cannot show screenshot controls", error);
+    return false;
+  }
+}
+
 // Shared tail for both capture paths: records the shot in clipboard history and fetches
 // the folder list in parallel, then hands the result to the content script's strip.
 // Both the single-viewport capture below and the full-page stitched capture funnel
@@ -57,19 +88,7 @@ async function finishCaptureAndShowStrip(dataUrl: string, tabId?: number): Promi
         console.error("BeHeld: failed to record screenshot in clipboard history", error);
       }),
     ]);
-    chrome.tabs.sendMessage(
-      targetTabId,
-      { type: "SHOW_STRIP", dataUrl, folders },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "BeHeld: could not reach content script — reload the tab after updating the extension",
-            chrome.runtime.lastError
-          );
-        }
-      }
-    );
-    return true;
+    return sendToContentScript(targetTabId, { type: "SHOW_STRIP", dataUrl, folders });
   } catch (error) {
     console.error("BeHeld: failed to get folders", error);
     return false;
@@ -142,22 +161,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "CAPTURE_FULL_PAGE") {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab?.id) {
         sendResponse({ success: false });
         return;
       }
 
-      chrome.tabs.sendMessage(activeTab.id, { type: "START_FULL_PAGE_CAPTURE" }, () => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "BeHeld: could not reach content script — reload the tab after updating the extension",
-            chrome.runtime.lastError
-          );
-        }
-      });
-      sendResponse({ success: true });
+      const success = await sendToContentScript(activeTab.id, { type: "START_FULL_PAGE_CAPTURE" });
+      sendResponse({ success });
     });
     return true;
   }
@@ -175,53 +187,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "OPEN_CLIPBOARD_STRIP") {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab?.id) {
         sendResponse({ success: false });
         return;
       }
 
-      chrome.tabs.sendMessage(
-        activeTab.id,
-        { type: "SHOW_STRIP", dataUrl: null, folders: [], openClipboard: true },
-        () => {
-          if (chrome.runtime.lastError) {
-            console.error(
-              "BeHeld: could not reach content script — reload the tab after updating the extension",
-              chrome.runtime.lastError
-            );
-          }
-        }
-      );
-      sendResponse({ success: true });
+      const success = await sendToContentScript(activeTab.id, {
+        type: "SHOW_STRIP",
+        dataUrl: null,
+        folders: [],
+        openClipboard: true,
+      });
+      sendResponse({ success });
     });
     return true;
   }
 
   if (message.type === "OPEN_LIBRARY") {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab?.id) {
         sendResponse({ success: false });
         return;
       }
 
-      getFolders().then((folders) => {
-        chrome.tabs.sendMessage(
-          activeTab.id!,
-          { type: "SHOW_LIBRARY", folders },
-          () => {
-            if (chrome.runtime.lastError) {
-              console.error(
-                "BeHeld: could not reach content script — reload the tab after updating the extension",
-                chrome.runtime.lastError
-              );
-            }
-          }
-        );
-        sendResponse({ success: true });
-      });
+      const folders = await getFolders();
+      const success = await sendToContentScript(activeTab.id, { type: "SHOW_LIBRARY", folders });
+      sendResponse({ success });
     });
     return true;
   }

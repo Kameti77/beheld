@@ -1,4 +1,15 @@
 import { useEffect, useState } from "react";
+import { Button } from "../design/Button";
+import { color, font, radius, shadow, space } from "../design/tokens";
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconClipboard,
+  IconClose,
+  IconFolder,
+  IconFolderOpen,
+  IconTrash,
+} from "../design/icons";
 import { ClipboardList, useClipboardItems } from "./ClipboardPanel";
 
 type LibraryTab = "folders" | "clipboard";
@@ -40,65 +51,41 @@ function FolderThumbnail({
   const [loaded, setLoaded] = useState(false);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "72px" }}>
-      <div className="beheld-lib-thumb" style={{ position: "relative", width: "72px", height: "72px" }}>
+    <div style={{ width: 84 }}>
+      <div className="bh-thumbnail" style={{ position: "relative", width: 84, height: 72 }}>
         <img
           src={item.thumbnailDataUrl}
           alt={item.filename}
           onLoad={() => setLoaded(true)}
-          onClick={() => {
-            if (!isConfirming) onImageClick();
-          }}
+          onClick={() => !isConfirming && onImageClick()}
           style={{
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            borderRadius: "6px",
-            border: "1px solid #2d4a2d",
+            borderRadius: radius.sm,
+            border: `1px solid ${color.border}`,
             opacity: loaded ? 1 : 0,
-            transition: "opacity 0.3s ease",
-            cursor: isConfirming ? "default" : "pointer",
+            transition: "opacity 180ms ease",
+            cursor: isConfirming ? "default" : "zoom-in",
           }}
         />
         {!isConfirming && (
           <button
+            className="bh-icon-btn bh-icon-btn--danger bh-thumbnail-delete"
             onClick={onDeleteClick}
-            title="Delete"
-            className="beheld-lib-thumb-delete"
-            style={{
-              position: "absolute",
-              top: "2px",
-              right: "2px",
-              border: "none",
-              background: "rgba(26, 46, 26, 0.85)",
-              color: "#e2685f",
-              borderRadius: "4px",
-              fontSize: "11px",
-              cursor: "pointer",
-              padding: "2px 4px",
-              lineHeight: 1,
-            }}
+            title={`Delete ${item.filename}`}
+            style={{ position: "absolute", top: 4, right: 4, background: color.bgElevated }}
           >
-            🗑
+            <IconTrash size={13} />
           </button>
         )}
       </div>
       {isConfirming && (
-        <div style={{ fontSize: "10px", color: "#c4e8c4", textAlign: "center", lineHeight: 1.3 }}>
-          Delete this screenshot?
-          <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "2px" }}>
-            <button
-              onClick={onConfirmDelete}
-              style={{ border: "none", background: "transparent", color: "#e2685f", cursor: "pointer", fontSize: "11px" }}
-            >
-              Yes
-            </button>
-            <button
-              onClick={onCancelDelete}
-              style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "11px" }}
-            >
-              Cancel
-            </button>
+        <div style={{ marginTop: space.xs, color: color.textSecondary, fontSize: font.size.xs, lineHeight: 1.35, textAlign: "center" }}>
+          Delete this?
+          <div style={{ display: "flex", justifyContent: "center", gap: space.sm, marginTop: 2 }}>
+            <button className="bh-link-button" onClick={onConfirmDelete} style={{ color: color.error }}>Delete</button>
+            <button className="bh-link-button" onClick={onCancelDelete} style={{ color: color.textMuted }}>Cancel</button>
           </div>
         </div>
       )}
@@ -106,11 +93,6 @@ function FolderThumbnail({
   );
 }
 
-// ── LIBRARY PANEL ──────────────────────────────────────────
-// A persistent browsing UI mounted from the popup's "Library" button. Unlike
-// DecisionStrip's prompt bubble it never auto-dismisses, and — mirroring
-// DecisionStrip's own icon column — it collapses by default to a thin icon
-// strip, expanding at most one of its two views (Folders / Clipboard) at a time.
 export function LibraryPanel({ folders }: { folders: string[] }) {
   const [closed, setClosed] = useState(false);
   const [expandedView, setExpandedView] = useState<LibraryTab | null>(null);
@@ -121,7 +103,6 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
   const [confirmingDeleteFolder, setConfirmingDeleteFolder] = useState<string | null>(null);
   const [confirmingDeleteScreenshot, setConfirmingDeleteScreenshot] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
-
   const clipboard = useClipboardItems();
 
   useEffect(() => {
@@ -130,19 +111,40 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
 
   if (closed) return null;
 
-  const regularFolders = localFolders.filter((f) => f !== "Temp");
+  const regularFolders = localFolders.filter((folder) => folder !== "Temp");
   const hasTemp = localFolders.includes("Temp");
+
+  const loadFolderContents = (name: string, includeOlder: boolean) => {
+    setLoadingFolder(name);
+    chrome.runtime.sendMessage({ type: "GET_FOLDER_CONTENTS", folderName: name, includeOlder }, (response) => {
+      setFolderContents((previous) => ({
+        ...previous,
+        [name]: {
+          items: response?.items ?? [],
+          hasOlder: response?.hasOlder ?? false,
+          permissionDenied: response?.permissionDenied ?? false,
+        },
+      }));
+      setLoadingFolder(null);
+    });
+  };
+
+  const handleToggleFolder = (name: string) => {
+    if (expandedFolder === name) return setExpandedFolder(null);
+    setExpandedFolder(name);
+    if (!folderContents[name]) loadFolderContents(name, false);
+  };
 
   const handleDeleteFolder = (name: string) => {
     chrome.runtime.sendMessage({ type: "DELETE_FOLDER", folderName: name }, (response) => {
       if (response?.success) {
-        setLocalFolders((prev) => prev.filter((f) => f !== name));
-        setFolderContents((prev) => {
-          const next = { ...prev };
+        setLocalFolders((previous) => previous.filter((folder) => folder !== name));
+        setFolderContents((previous) => {
+          const next = { ...previous };
           delete next[name];
           return next;
         });
-        setExpandedFolder((prev) => (prev === name ? null : prev));
+        setExpandedFolder((previous) => (previous === name ? null : previous));
       } else {
         console.error(`BeHeld: failed to delete folder ${name}`);
       }
@@ -150,414 +152,160 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     });
   };
 
-  const loadFolderContents = (name: string, includeOlder: boolean) => {
-    setLoadingFolder(name);
-    chrome.runtime.sendMessage(
-      { type: "GET_FOLDER_CONTENTS", folderName: name, includeOlder },
-      (response) => {
-        setFolderContents((prev) => ({
-          ...prev,
-          [name]: {
-            items: response?.items ?? [],
-            hasOlder: response?.hasOlder ?? false,
-            permissionDenied: response?.permissionDenied ?? false,
-          },
-        }));
-        setLoadingFolder(null);
-      }
-    );
-  };
-
-  const handleToggleFolder = (name: string) => {
-    if (expandedFolder === name) {
-      setExpandedFolder(null);
-      return;
-    }
-    setExpandedFolder(name);
-    if (folderContents[name]) return;
-    loadFolderContents(name, false);
-  };
-
-  const handleShowOlder = (name: string) => {
-    loadFolderContents(name, true);
-  };
-
   const handleDeleteScreenshot = (folder: string, filename: string) => {
-    chrome.runtime.sendMessage(
-      { type: "DELETE_SCREENSHOT", folderName: folder, filename },
-      (response) => {
-        if (response?.success) {
-          setFolderContents((prev) => {
-            const current = prev[folder];
-            if (!current) return prev;
-            return {
-              ...prev,
-              [folder]: {
-                ...current,
-                items: current.items.filter((item) => item.filename !== filename),
-              },
-            };
-          });
-        } else {
-          console.error(`BeHeld: failed to delete screenshot ${filename}`);
-        }
-        setConfirmingDeleteScreenshot(null);
+    chrome.runtime.sendMessage({ type: "DELETE_SCREENSHOT", folderName: folder, filename }, (response) => {
+      if (response?.success) {
+        setFolderContents((previous) => {
+          const current = previous[folder];
+          if (!current) return previous;
+          return { ...previous, [folder]: { ...current, items: current.items.filter((item) => item.filename !== filename) } };
+        });
+      } else {
+        console.error(`BeHeld: failed to delete screenshot ${filename}`);
       }
-    );
+      setConfirmingDeleteScreenshot(null);
+    });
   };
 
   const openLightbox = (folder: string, filename: string) => {
     setLightbox({ folder, filename, loading: true, error: false, dataUrl: null });
-    chrome.runtime.sendMessage(
-      { type: "GET_SCREENSHOT", folderName: folder, filename },
-      (response) => {
-        setLightbox((prev) => {
-          if (!prev || prev.folder !== folder || prev.filename !== filename) return prev;
-          if (response?.success && response?.dataUrl) {
-            return { ...prev, loading: false, error: false, dataUrl: response.dataUrl };
-          }
-          return { ...prev, loading: false, error: true };
-        });
-      }
-    );
+    chrome.runtime.sendMessage({ type: "GET_SCREENSHOT", folderName: folder, filename }, (response) => {
+      setLightbox((previous) => {
+        if (!previous || previous.folder !== folder || previous.filename !== filename) return previous;
+        if (response?.success && response?.dataUrl) return { ...previous, loading: false, dataUrl: response.dataUrl };
+        return { ...previous, loading: false, error: true };
+      });
+    });
   };
 
-  const closeLightbox = () => setLightbox(null);
+  const renderFolderRow = (folder: string) => {
+    const isTemp = folder === "Temp";
+    const isOpen = expandedFolder === folder;
+    const contents = folderContents[folder];
 
-  const handleToggleView = (view: LibraryTab) => {
-    setExpandedView((prev) => (prev === view ? null : view));
-  };
-
-  const renderFolderRow = (folder: string) => (
-    <div key={folder} style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+    return (
+      <div key={folder} style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
         {confirmingDeleteFolder === folder ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
-            <span style={{ flex: 1, fontSize: "12px", color: "#c4e8c4" }}>Delete "{folder}"?</span>
-            <button
-              onClick={() => handleDeleteFolder(folder)}
-              style={{ border: "none", background: "transparent", color: "#e2685f", cursor: "pointer", fontSize: "12px" }}
-            >
-              Yes
-            </button>
-            <button
-              onClick={() => setConfirmingDeleteFolder(null)}
-              style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "12px" }}
-            >
-              Cancel
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: space.sm, padding: `${space.sm}px` }}>
+            <span style={{ flex: 1, color: color.textSecondary, fontSize: font.size.sm }}>Delete “{folder}” and its screenshots?</span>
+            <Button variant="destructive" size="sm" onClick={() => handleDeleteFolder(folder)}>Delete</Button>
+            <Button variant="tertiary" size="sm" onClick={() => setConfirmingDeleteFolder(null)}>Cancel</Button>
           </div>
         ) : (
-          <>
+          <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
             <button
+              className="bh-row"
               onClick={() => handleToggleFolder(folder)}
+              aria-expanded={isOpen}
               style={{
                 flex: 1,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                background: folder === "Temp" ? "#2a2008" : "#2d4a2d",
-                border: folder === "Temp" ? "1px solid #6a4e0a" : "1px solid #3a5e3a",
-                borderRadius: "8px",
-                padding: "10px 12px",
-                color: folder === "Temp" ? "#F59E0B" : "#c4e8c4",
-                fontSize: "13px",
+                gap: space.sm,
+                background: color.bgElevated,
+                border: `1px solid ${isOpen ? color.borderStrong : color.border}`,
+                borderRadius: radius.md,
+                padding: `${space.sm}px ${space.md}px`,
+                color: color.textPrimary,
+                fontFamily: font.family,
+                fontSize: font.size.base,
                 cursor: "pointer",
                 textAlign: "left",
               }}
             >
-              <span>{expandedFolder === folder ? "📂" : "📁"} {folder}</span>
+              {isOpen ? <IconFolderOpen size={15} color={isTemp ? color.warning : color.brand} /> : <IconFolder size={15} color={isTemp ? color.warning : color.brand} />}
+              <span style={{ flex: 1 }}>{folder}</span>
+              {isOpen ? <IconChevronDown size={15} color={color.textMuted} /> : <IconChevronRight size={15} color={color.textMuted} />}
             </button>
-            <button
-              onClick={() => setConfirmingDeleteFolder(folder)}
-              title={`Delete ${folder}`}
-              style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "13px", padding: "4px" }}
-            >
-              🗑
+            <button className="bh-icon-btn bh-icon-btn--danger" onClick={() => setConfirmingDeleteFolder(folder)} title={`Delete ${folder}`}>
+              <IconTrash size={14} />
             </button>
-          </>
+          </div>
         )}
-      </div>
 
-      {expandedFolder === folder && (
-        <div style={{ padding: "10px 4px 4px 4px" }}>
-          {loadingFolder === folder && (
-            <div style={{ fontSize: "11px", color: "#5a7a5a" }}>Loading…</div>
-          )}
-          {loadingFolder !== folder && folderContents[folder]?.permissionDenied && (
-            <div style={{ fontSize: "11px", color: "#F59E0B" }}>
-              Permission needed — open the popup and re-select your screenshots folder.
-            </div>
-          )}
-          {loadingFolder !== folder &&
-            !folderContents[folder]?.permissionDenied &&
-            (folderContents[folder]?.items.length ?? 0) === 0 && (
-              <div>
-                <div style={{ fontSize: "11px", color: "#5a7a5a" }}>No recent screenshots in this folder</div>
-                {folderContents[folder]?.hasOlder && (
-                  <button
-                    onClick={() => handleShowOlder(folder)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "#4ADE80",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                      padding: 0,
-                      marginTop: "6px",
-                      textDecoration: "underline",
-                    }}
-                  >
-                    Show older
-                  </button>
-                )}
+        {isOpen && (
+          <div style={{ padding: `0 ${space.xs}px ${space.md}px` }}>
+            {loadingFolder === folder && <div style={{ color: color.textMuted, fontSize: font.size.sm }}>Loading screenshots…</div>}
+            {loadingFolder !== folder && contents?.permissionDenied && (
+              <div style={{ color: color.warningText, fontSize: font.size.sm, lineHeight: 1.45 }}>
+                Permission needed — open the popup and re-select your screenshots folder.
               </div>
             )}
-          {loadingFolder !== folder &&
-            !folderContents[folder]?.permissionDenied &&
-            (folderContents[folder]?.items.length ?? 0) > 0 && (
+            {loadingFolder !== folder && !contents?.permissionDenied && (contents?.items.length ?? 0) === 0 && (
+              <div style={{ color: color.textMuted, fontSize: font.size.sm }}>
+                No recent screenshots in this folder.
+                {contents?.hasOlder && <div style={{ marginTop: space.sm }}><button className="bh-link-button" onClick={() => loadFolderContents(folder, true)}>Show older</button></div>}
+              </div>
+            )}
+            {loadingFolder !== folder && !contents?.permissionDenied && (contents?.items.length ?? 0) > 0 && (
               <div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                  {(folderContents[folder]?.items ?? []).map((item) => {
+                <div style={{ display: "flex", flexWrap: "wrap", gap: space.sm }}>
+                  {contents?.items.map((item) => {
                     const key = `${folder}|${item.filename}`;
-                    return (
-                      <FolderThumbnail
-                        key={item.filename}
-                        item={item}
-                        isConfirming={confirmingDeleteScreenshot === key}
-                        onDeleteClick={() => setConfirmingDeleteScreenshot(key)}
-                        onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)}
-                        onCancelDelete={() => setConfirmingDeleteScreenshot(null)}
-                        onImageClick={() => openLightbox(folder, item.filename)}
-                      />
-                    );
+                    return <FolderThumbnail key={item.filename} item={item} isConfirming={confirmingDeleteScreenshot === key} onDeleteClick={() => setConfirmingDeleteScreenshot(key)} onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)} onCancelDelete={() => setConfirmingDeleteScreenshot(null)} onImageClick={() => openLightbox(folder, item.filename)} />;
                   })}
                 </div>
-                {folderContents[folder]?.hasOlder && (
-                  <button
-                    onClick={() => handleShowOlder(folder)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "#4ADE80",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                      padding: 0,
-                      marginTop: "8px",
-                      textDecoration: "underline",
-                    }}
-                  >
-                    Show older
-                  </button>
-                )}
+                {contents?.hasOlder && <div style={{ marginTop: space.md }}><button className="bh-link-button" onClick={() => loadFolderContents(folder, true)}>Show older</button></div>}
               </div>
             )}
-        </div>
-      )}
-    </div>
-  );
+          </div>
+        )}
+      </div>
+    );
+  };
 
-  // Mirrors DecisionStrip's icon column: rounded on whichever edges aren't
-  // flush against an expanded view, flat on the seam shared with it.
-  let iconColumnRadius = "8px";
-  if (expandedView === "folders") iconColumnRadius = "0 8px 8px 0";
-  if (expandedView === "clipboard") iconColumnRadius = "8px 8px 0 0";
+  const iconColumnRadius = expandedView === "folders" ? `0 ${radius.lg}px ${radius.lg}px 0` : expandedView === "clipboard" ? `${radius.lg}px ${radius.lg}px 0 0` : `${radius.lg}px`;
 
   return (
     <>
-    <div
-      style={{
-        position: "fixed",
-        top: "60px",
-        right: "20px",
-        zIndex: 999999,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        fontFamily: "sans-serif",
-      }}
-    >
-      <style>{`
-        .beheld-lib-thumb-delete { opacity: 0; transition: opacity 0.15s ease; }
-        .beheld-lib-thumb:hover .beheld-lib-thumb-delete { opacity: 1; }
-      `}</style>
-
-      {/* Folders view expands to the left of the icon column, matching
-          DecisionStrip's own folder-panel-to-the-left convention. */}
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
-        {expandedView === "folders" && (
-          <div
-            style={{
-              background: "#1f361f",
-              border: "1px solid #2d4a2d",
-              borderRadius: "8px 0 0 8px",
-              padding: "12px 14px",
-              width: "320px",
-              maxHeight: "70vh",
-              overflowY: "auto",
-              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={{ fontSize: "11px", color: "#5a7a5a", lineHeight: 1.4 }}>
-                Folders show screenshots from the last 7 days only. Open your screenshots folder in File Explorer or Finder to view older or all saved files directly.
+      <div style={{ position: "fixed", top: 60, right: 20, zIndex: 999999, display: "flex", flexDirection: "column", alignItems: "flex-end", fontFamily: font.family }}>
+        <div style={{ display: "flex", alignItems: "flex-start" }}>
+          {expandedView === "folders" && (
+            <section style={{ width: 336, maxHeight: "70vh", overflowY: "auto", background: color.bgSurface, borderRadius: `${radius.lg}px 0 0 ${radius.lg}px`, boxShadow: shadow.lg, padding: space.lg }}>
+              <div style={{ marginBottom: space.lg }}>
+                <h2 style={{ margin: 0, color: color.textPrimary, fontSize: font.size.md, fontWeight: font.weight.semibold }}>Screenshot folders</h2>
+                <p style={{ margin: `${space.xs}px 0 0`, color: color.textMuted, fontSize: font.size.xs, lineHeight: 1.45 }}>Showing the last 7 days. Older screenshots remain available in your saved folder.</p>
               </div>
-              {regularFolders.map(renderFolderRow)}
-              {hasTemp && renderFolderRow("Temp")}
-            </div>
-          </div>
-        )}
+              <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+                {regularFolders.map(renderFolderRow)}
+                {hasTemp && renderFolderRow("Temp")}
+              </div>
+            </section>
+          )}
 
-        <div
-          style={{
-            background: "#1A2E1A",
-            borderRadius: iconColumnRadius,
-            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-            width: "36px",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            padding: "10px 0",
-            gap: "12px",
-          }}
-        >
-          <div
-            onClick={() => handleToggleView("folders")}
-            title="Folders"
-            style={{
-              color: "#4ADE80",
-              fontSize: "18px",
-              cursor: "pointer",
-              lineHeight: 1,
-              background: expandedView === "folders" ? "#243b24" : "transparent",
-              borderRadius: "4px",
-              padding: "2px",
-            }}
-          >
-            📁
-          </div>
-
-          <div
-            onClick={() => handleToggleView("clipboard")}
-            title="Clipboard"
-            style={{
-              color: "#4ADE80",
-              fontSize: "18px",
-              cursor: "pointer",
-              lineHeight: 1,
-              background: expandedView === "clipboard" ? "#243b24" : "transparent",
-              borderRadius: "4px",
-              padding: "2px",
-            }}
-          >
-            📑
-          </div>
-
-          <button
-            onClick={() => setClosed(true)}
-            title="Close"
-            style={{ border: "none", background: "transparent", color: "#5a7a5a", cursor: "pointer", fontSize: "14px", lineHeight: 1 }}
-          >
-            ✕
-          </button>
+          <nav aria-label="BeHeld library" style={{ background: color.bgElevated, borderRadius: iconColumnRadius, boxShadow: shadow.lg, width: 40, display: "flex", flexDirection: "column", alignItems: "center", padding: `${space.sm}px 0`, gap: space.sm }}>
+            <button className="bh-icon-btn" onClick={() => setExpandedView((current) => current === "folders" ? null : "folders")} title="Folders" aria-label="Folders" style={{ color: expandedView === "folders" ? color.brand : color.textSecondary, background: expandedView === "folders" ? color.bgHover : "transparent" }}>
+              <IconFolder size={17} />
+            </button>
+            <button className="bh-icon-btn" onClick={() => setExpandedView((current) => current === "clipboard" ? null : "clipboard")} title="Clipboard" aria-label="Clipboard" style={{ color: expandedView === "clipboard" ? color.brand : color.textSecondary, background: expandedView === "clipboard" ? color.bgHover : "transparent" }}>
+              <IconClipboard size={17} />
+            </button>
+            <div style={{ height: 1, width: 20, background: color.border, margin: `${space.xs}px 0` }} />
+            <button className="bh-icon-btn" onClick={() => setClosed(true)} title="Close library" aria-label="Close library"><IconClose size={16} /></button>
+          </nav>
         </div>
+
+        {expandedView === "clipboard" && (
+          <section style={{ width: 336, background: color.bgSurface, borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`, boxShadow: shadow.lg, padding: space.lg }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: space.md }}>
+              <h2 style={{ margin: 0, color: color.textPrimary, fontSize: font.size.md, fontWeight: font.weight.semibold }}>Clipboard</h2>
+              <span style={{ color: color.textMuted, fontSize: font.size.xs }}>{clipboard.items.length} item{clipboard.items.length === 1 ? "" : "s"}</span>
+            </div>
+            <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" />
+          </section>
+        )}
       </div>
 
-      {/* Clipboard view expands below the icon column, matching DecisionStrip's
-          own clipboard-panel-below convention. */}
-      {expandedView === "clipboard" && (
-        <div
-          style={{
-            width: "320px",
-            background: "#1f361f",
-            border: "1px solid #2d4a2d",
-            borderRadius: "0 0 8px 8px",
-            padding: "10px",
-            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
-          }}
-        >
-          <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" />
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} role="presentation" style={{ position: "fixed", inset: 0, background: "rgba(8, 11, 9, 0.78)", zIndex: 1000000, display: "flex", alignItems: "center", justifyContent: "center", padding: space.xxl }}>
+          <div onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={lightbox.filename} style={{ position: "relative", maxWidth: "85vw", maxHeight: "85vh", background: color.bgSurface, border: `1px solid ${color.border}`, borderRadius: radius.lg, padding: space.lg, boxShadow: shadow.lg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button className="bh-icon-btn" onClick={() => setLightbox(null)} title="Close" aria-label="Close" style={{ position: "absolute", top: space.sm, right: space.sm, background: color.bgElevated, zIndex: 1 }}><IconClose size={16} /></button>
+            {lightbox.loading && <div style={{ color: color.textSecondary, fontSize: font.size.base, padding: "48px 64px" }}>Loading full image…</div>}
+            {!lightbox.loading && lightbox.error && <div style={{ color: color.error, fontSize: font.size.base, padding: "48px 64px" }}>Failed to load full-resolution image.</div>}
+            {!lightbox.loading && !lightbox.error && lightbox.dataUrl && <img src={lightbox.dataUrl} alt={lightbox.filename} style={{ maxWidth: "85vw", maxHeight: "85vh", objectFit: "contain", borderRadius: radius.sm, display: "block" }} />}
+          </div>
         </div>
       )}
-    </div>
-
-    {lightbox && (
-      <div
-        onClick={closeLightbox}
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0, 0, 0, 0.75)",
-          zIndex: 1000000,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "relative",
-            maxWidth: "85vw",
-            maxHeight: "85vh",
-            background: "#1A2E1A",
-            border: "1px solid #2d4a2d",
-            borderRadius: "10px",
-            padding: "16px",
-            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <button
-            onClick={closeLightbox}
-            title="Close"
-            style={{
-              position: "absolute",
-              top: "8px",
-              right: "8px",
-              border: "none",
-              background: "rgba(26, 46, 26, 0.85)",
-              color: "#c4e8c4",
-              borderRadius: "4px",
-              fontSize: "14px",
-              cursor: "pointer",
-              padding: "4px 8px",
-              lineHeight: 1,
-            }}
-          >
-            ✕
-          </button>
-          {lightbox.loading && (
-            <div style={{ color: "#c4e8c4", fontSize: "13px", padding: "48px 64px" }}>
-              Loading full image…
-            </div>
-          )}
-          {!lightbox.loading && lightbox.error && (
-            <div style={{ color: "#e2685f", fontSize: "13px", padding: "48px 64px" }}>
-              Failed to load full-resolution image.
-            </div>
-          )}
-          {!lightbox.loading && !lightbox.error && lightbox.dataUrl && (
-            <img
-              src={lightbox.dataUrl}
-              alt={lightbox.filename}
-              style={{
-                maxWidth: "85vw",
-                maxHeight: "85vh",
-                objectFit: "contain",
-                borderRadius: "6px",
-                display: "block",
-              }}
-            />
-          )}
-        </div>
-      </div>
-    )}
     </>
   );
 }

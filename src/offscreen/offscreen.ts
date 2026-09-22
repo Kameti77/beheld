@@ -367,6 +367,12 @@ async function getFolderContents(
 
     return { items, hasOlder: !includeOlder && hasOlder, permissionDenied: false };
   } catch (error) {
+    // A folder may have been removed in File Explorer/Finder, or the default
+    // Temp folder may not exist yet because no screenshot has been saved. Both
+    // cases are simply an empty folder from the Library's perspective.
+    if ((error as DOMException).name === "NotFoundError") {
+      return { items: [], hasOlder: false, permissionDenied: false };
+    }
     console.error("Offscreen folder contents error:", error);
     return { items: [], hasOlder: false, permissionDenied: false };
   }

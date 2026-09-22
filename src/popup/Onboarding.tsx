@@ -1,3 +1,7 @@
+import { Button } from "../design/Button";
+import { color, font, space } from "../design/tokens";
+import { IconFolder } from "../design/icons";
+
 interface Props {
   onComplete: () => void;
 }
@@ -5,45 +9,23 @@ interface Props {
 function Onboarding({ onComplete }: Props) {
   const handlePickFolder = async () => {
     try {
-      const handle = await (window as any).showDirectoryPicker({
-        mode: "readwrite",
-      });
-
-      // Send handle to be stored via service worker message
-      (chrome as any).runtime.sendMessage(
-        { type: "SAVE_ROOT_HANDLE", handle },
-        () => {
-          onComplete();
-        }
-      );
+      const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
+      (chrome as any).runtime.sendMessage({ type: "SAVE_ROOT_HANDLE", handle }, onComplete);
     } catch (error) {
-      // User cancelled the picker — do nothing
-      console.log("Folder picker cancelled");
+      console.log("Folder picker cancelled", error);
     }
   };
 
   return (
-    <div style={{ width: 320, padding: 24 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 8 }}>Welcome to BeHeld</h1>
-      <p style={{ fontSize: 13, color: "#555", marginBottom: 20, lineHeight: 1.6 }}>
-        First, choose where BeHeld should save your screenshots. This is a
-        one-time setup.
+    <div style={{ width: 320, boxSizing: "border-box", padding: space.xl, background: color.bgBase, color: color.textPrimary, fontFamily: font.family }}>
+      <div style={{ width: 36, height: 36, display: "grid", placeItems: "center", color: color.brand, background: "rgba(74,222,128,0.10)", borderRadius: 8, marginBottom: space.lg }}>
+        <IconFolder size={18} />
+      </div>
+      <h1 style={{ margin: 0, fontSize: font.size.xl, fontWeight: font.weight.semibold }}>Welcome to BeHeld</h1>
+      <p style={{ margin: `${space.sm}px 0 ${space.xl}px`, color: color.textSecondary, fontSize: font.size.base, lineHeight: 1.6 }}>
+        Choose where BeHeld should save your screenshots. You can change this any time in Settings.
       </p>
-      <button
-        onClick={handlePickFolder}
-        style={{
-          background: "#1A2E1A",
-          color: "#4ADE80",
-          border: "none",
-          borderRadius: 8,
-          padding: "10px 20px",
-          fontSize: 14,
-          cursor: "pointer",
-          width: "100%",
-        }}
-      >
-        Choose Screenshots Folder
-      </button>
+      <Button variant="primary" fullWidth onClick={handlePickFolder}>Choose screenshots folder</Button>
     </div>
   );
 }
