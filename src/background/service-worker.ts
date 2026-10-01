@@ -272,6 +272,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "RENAME_FOLDER") {
+    relayToOffscreen<{ success?: boolean; reason?: string; folders?: string[] }>(
+      "OFFSCREEN_RENAME_FOLDER",
+      { oldName: message.oldName, newName: message.newName }
+    )
+      .then((response) =>
+        sendResponse({
+          success: response?.success ?? false,
+          reason: response?.reason,
+          folders: response?.folders ?? [],
+        })
+      )
+      .catch((error) => {
+        console.error("BeHeld: failed to rename folder", error);
+        sendResponse({ success: false });
+      });
+    return true;
+  }
+
+  if (message.type === "RENAME_SCREENSHOT") {
+    relayToOffscreen<{ success?: boolean; reason?: string }>("OFFSCREEN_RENAME_SCREENSHOT", {
+      folderName: message.folderName,
+      oldFilename: message.oldFilename,
+      newFilename: message.newFilename,
+    })
+      .then((response) => sendResponse({ success: response?.success ?? false, reason: response?.reason }))
+      .catch((error) => {
+        console.error("BeHeld: failed to rename screenshot", error);
+        sendResponse({ success: false });
+      });
+    return true;
+  }
+
   if (message.type === "ADD_CLIPBOARD_ITEM") {
     relayToOffscreen<{ items?: unknown[] }>("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
       itemType: message.itemType,

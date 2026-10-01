@@ -33,6 +33,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "OFFSCREEN_RENAME_FOLDER") {
+    renameFolder(message.oldName, message.newName).then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
+  if (message.type === "OFFSCREEN_RENAME_SCREENSHOT") {
+    renameScreenshot(message.folderName, message.oldFilename, message.newFilename).then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
   if (message.type === "OFFSCREEN_ADD_CLIPBOARD_ITEM") {
     addClipboardItem(message.itemType, message.content).then((items) => {
       sendResponse({ items });
@@ -224,6 +238,100 @@ async function handleDeleteFolder(folderName: string): Promise<boolean> {
   } catch (error) {
     console.error("Offscreen delete folder error:", error);
     return false;
+  }
+}
+
+interface RenameResult {
+  success: boolean;
+  reason?: "exists" | "denied" | "not_found";
+  folders?: string[];
+}
+
+// The File System Access API has no native rename — a folder rename copies every
+// file into a freshly created directory under the new name, then removes the old one.
+async function renameFolder(oldName: string, newName: string): Promise<RenameResult> {
+  try {
+    const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
+    if (!rootHandle) return { success: false, reason: "not_found" };
+
+    const permission = await (rootHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") return { success: false, reason: "denied" };
+
+    try {
+      await rootHandle.getDirectoryHandle(newName);
+      return { success: false, reason: "exists" };
+    } catch {
+      // Not found is the expected, non-colliding case — fall through to rename.
+    }
+
+    const oldFolderHandle = await rootHandle.getDirectoryHandle(oldName);
+    const newFolderHandle = await rootHandle.getDirectoryHandle(newName, { create: true });
+
+    for await (const [name, handle] of oldFolderHandle.entries()) {
+      if (handle.kind !== "file") continue;
+      const file = await (handle as FileSystemFileHandle).getFile();
+      const newFileHandle = await newFolderHandle.getFileHandle(name, { create: true });
+      const writable = await newFileHandle.createWritable();
+      await writable.write(file);
+      await writable.close();
+    }
+
+    await rootHandle.removeEntry(oldName, { recursive: true });
+
+    const folders = (await get<string[]>("beheld-folders")) ?? ["Temp"];
+    const updated = folders.map((f) => (f === oldName ? newName : f));
+    await set("beheld-folders", updated);
+
+    return { success: true, folders: updated };
+  } catch (error) {
+    console.error("Offscreen rename folder error:", error);
+    return { success: false };
+  }
+}
+
+async function renameScreenshot(
+  folderName: string,
+  oldFilename: string,
+  newFilename: string
+): Promise<RenameResult> {
+  try {
+    const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
+    if (!rootHandle) return { success: false, reason: "not_found" };
+
+    const permission = await (rootHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") return { success: false, reason: "denied" };
+
+    const folderHandle = await rootHandle.getDirectoryHandle(folderName);
+
+    if (newFilename !== oldFilename) {
+      try {
+        await folderHandle.getFileHandle(newFilename);
+        return { success: false, reason: "exists" };
+      } catch {
+        // Not found is the expected, non-colliding case — fall through to rename.
+      }
+    }
+
+    const oldFileHandle = await folderHandle.getFileHandle(oldFilename);
+    const file = await oldFileHandle.getFile();
+
+    const newFileHandle = await folderHandle.getFileHandle(newFilename, { create: true });
+    const writable = await newFileHandle.createWritable();
+    await writable.write(file);
+    await writable.close();
+
+    await folderHandle.removeEntry(oldFilename);
+
+    return { success: true };
+  } catch (error) {
+    console.error("Offscreen rename screenshot error:", error);
+    return { success: false };
   }
 }
 

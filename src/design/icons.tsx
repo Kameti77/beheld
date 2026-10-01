@@ -27,6 +27,7 @@ import {
   Image,
   ChevronDown,
   ChevronRight,
+  Pencil,
   type LucideProps,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -60,3 +61,4 @@ export const IconFullPage = withDefaults(ScanLine);
 export const IconImage = withDefaults(Image);
 export const IconChevronDown = withDefaults(ChevronDown);
 export const IconChevronRight = withDefaults(ChevronRight);
+export const IconEdit = withDefaults(Pencil);
