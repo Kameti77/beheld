@@ -39,8 +39,14 @@ export async function copyImageToClipboard(dataUrl: string) {
 
 export function useClipboardItems() {
   const [items, setItems] = useState<ClipboardEntry[]>([]);
+  // Only true during the initial fetch — lets the panel show a spinner instead
+  // of a misleading "Nothing copied yet" while the request is still in flight.
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Picks up both same-tab updates (e.g. this tab's own copy listener) and
+    // cross-tab ones relayed by the service worker's CLIPBOARD_SYNC broadcast,
+    // so a panel left open here reflects something copied in a different tab.
     const listener = (updated: ClipboardEntry[]) => setItems(updated);
     clipboardListeners.add(listener);
     return () => {
@@ -49,8 +55,10 @@ export function useClipboardItems() {
   }, []);
 
   const load = () => {
+    setLoading(true);
     chrome.runtime.sendMessage({ type: "GET_CLIPBOARD_ITEMS" }, (response) => {
       setItems(response?.items ?? []);
+      setLoading(false);
     });
   };
 
@@ -65,7 +73,7 @@ export function useClipboardItems() {
     else await copyImageToClipboard(item.content);
   };
 
-  return { items, load, deleteItem, recopy };
+  return { items, loading, load, deleteItem, recopy };
 }
 
 export function ClipboardList({
@@ -73,12 +81,39 @@ export function ClipboardList({
   onDelete,
   onRecopy,
   maxHeight = "150px",
+  loading = false,
 }: {
   items: ClipboardEntry[];
   onDelete: (id: string) => void;
   onRecopy: (item: ClipboardEntry) => void;
   maxHeight?: string;
+  loading?: boolean;
 }) {
+  // Only cover the list with the loading state while there's nothing to show yet —
+  // once items exist, a background refresh shouldn't blank out what's visible.
+  if (loading && items.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: space.sm, padding: `${space.xl}px ${space.sm}px` }}>
+        <style>{`
+          @keyframes bh-spin { to { transform: rotate(360deg); } }
+          .bh-spinner {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid ${color.border};
+            border-top-color: ${color.brand};
+            animation: bh-spin 0.7s linear infinite;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .bh-spinner { animation: none; border-top-color: ${color.border}; }
+          }
+        `}</style>
+        <div className="bh-spinner" aria-hidden="true" />
+        <div style={{ color: color.textMuted, fontSize: font.size.sm }}>Loading…</div>
+      </div>
+    );
+  }
+
   if (items.length === 0) {
     return (
       <div style={{ padding: `${space.xl}px ${space.sm}px`, color: color.textMuted, fontSize: font.size.sm, textAlign: "center" }}>
