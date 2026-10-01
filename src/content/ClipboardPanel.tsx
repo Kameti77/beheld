@@ -130,6 +130,16 @@ export function ClipboardList({
           <div
             key={item.id}
             className="bh-row"
+            draggable
+            onDragStart={(event) => {
+              // Native HTML5 drag-and-drop: a browser text input/textarea/contenteditable
+              // handles a "text/plain" drop on its own (insert at the drop position) with
+              // no listener needed on the page's side, so a screenshot's data URL also
+              // works as a best-effort drop payload even though it isn't text to read.
+              event.dataTransfer.setData("text/plain", item.content);
+              event.dataTransfer.effectAllowed = "copy";
+            }}
+            title={`${item.itemType === "image" ? "Screenshot" : "Copied text"} — drag onto a text box to paste, or click to copy again`}
             style={{
               display: "flex",
               alignItems: "center",
@@ -138,6 +148,7 @@ export function ClipboardList({
               border: `1px solid ${color.border}`,
               borderRadius: radius.sm,
               padding: `${space.sm}px`,
+              cursor: "grab",
             }}
           >
             <div

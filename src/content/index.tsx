@@ -680,6 +680,16 @@ function DecisionStrip({
     );
   };
 
+  // Mirrors the icon-rail "Copy to clipboard" button, but lives inside the folder
+  // panel too — spelled out precisely, since a bare clipboard icon next to a list
+  // of save destinations reads ambiguously about whether it also saves a copy.
+  const handleCopyOnly = () => {
+    if (!workingDataUrl) return;
+    copyImageToClipboard(workingDataUrl).then(() => {
+      showConfirmation("success", "Copied — not saved to a folder");
+    });
+  };
+
   const renderFolderRow = (folder: string) => {
     const isTemp = folder === "Temp";
     return (
@@ -906,6 +916,18 @@ function DecisionStrip({
               </span>
               <span style={{ fontSize: font.size.xs, color: color.textMuted, paddingLeft: "23px" }}>
                 Quick-saves to the folder you chose once in Settings
+              </span>
+            </button>
+
+            <div style={{ height: 1, background: color.border, margin: "4px 6px" }} />
+
+            <button className="bh-menu-item" onClick={handleCopyOnly} style={{ flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <IconCopy size={15} />
+                Copy only — don't save
+              </span>
+              <span style={{ fontSize: font.size.xs, color: color.textMuted, paddingLeft: "23px" }}>
+                Copies the image to your clipboard. Nothing is written to a folder.
               </span>
             </button>
           </div>
