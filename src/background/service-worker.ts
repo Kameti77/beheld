@@ -33,6 +33,24 @@ async function getFolders(): Promise<string[]> {
   return response?.folders ?? ["Temp"];
 }
 
+// Tells every open content script about the latest clipboard list, so a panel left
+// open elsewhere reflects a copy/delete that just happened somewhere else instead of
+// only updating on its own next explicit load. chrome.runtime.sendMessage from the
+// background only reaches other extension pages (popup, offscreen) — it never reaches
+// a content script in a tab, so this has to enumerate tabs and target each one.
+function broadcastClipboardSync(items: unknown[]) {
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id == null) continue;
+      chrome.tabs.sendMessage(tab.id, { type: "CLIPBOARD_SYNC", items }, () => {
+        // Most tabs have no BeHeld content script injected — reading lastError here
+        // marks it handled instead of logging an unchecked-error warning for each one.
+        void chrome.runtime.lastError;
+      });
+    }
+  });
+}
+
 // BeHeld deliberately injects this bundled script only after the user invokes a
 // feature. The first message is a lightweight presence check; if the page has no
 // script yet, inject it with the user's temporary activeTab access and retry.
@@ -79,20 +97,34 @@ async function finishCaptureAndShowStrip(dataUrl: string, tabId?: number): Promi
   }
 
   try {
-    const [folders] = await Promise.all([
+    const [folders, clipboardResult] = await Promise.all([
       getFolders(),
-      relayToOffscreen("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
+      relayToOffscreen<{ items?: unknown[] }>("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
         itemType: "image",
         content: dataUrl,
       }).catch((error) => {
         console.error("BeHeld: failed to record screenshot in clipboard history", error);
+        return undefined;
       }),
     ]);
+    if (clipboardResult?.items) broadcastClipboardSync(clipboardResult.items);
     return sendToContentScript(targetTabId, { type: "SHOW_STRIP", dataUrl, folders });
   } catch (error) {
     console.error("BeHeld: failed to get folders", error);
     return false;
   }
+}
+
+// Asks the content script (if any is injected on this tab) to hide BeHeld's own
+// strip/library/crop panel before a capture, and resolves regardless of whether
+// anything answered — a tab with no BeHeld UI on it is the common case.
+function setBeheldUIHiddenOnTab(tabId: number, hidden: boolean): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: hidden ? "HIDE_BEHELD_UI" : "SHOW_BEHELD_UI" }, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    });
+  });
 }
 
 async function captureAndShowStrip(): Promise<boolean> {
@@ -102,6 +134,8 @@ async function captureAndShowStrip(): Promise<boolean> {
     return false;
   }
 
+  await setBeheldUIHiddenOnTab(activeTab.id, true);
+
   const { dataUrl, captureError } = await new Promise<{
     dataUrl: string | undefined;
     captureError: chrome.runtime.LastError | undefined;
@@ -110,6 +144,8 @@ async function captureAndShowStrip(): Promise<boolean> {
       resolve({ dataUrl: result, captureError: chrome.runtime.lastError });
     });
   });
+
+  await setBeheldUIHiddenOnTab(activeTab.id, false);
 
   if (captureError || !dataUrl) {
     console.error("BeHeld: capture failed", captureError);
@@ -243,12 +279,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "RENAME_FOLDER") {
+    relayToOffscreen<{ success?: boolean; reason?: string; folders?: string[] }>(
+      "OFFSCREEN_RENAME_FOLDER",
+      { oldName: message.oldName, newName: message.newName }
+    )
+      .then((response) =>
+        sendResponse({
+          success: response?.success ?? false,
+          reason: response?.reason,
+          folders: response?.folders ?? [],
+        })
+      )
+      .catch((error) => {
+        console.error("BeHeld: failed to rename folder", error);
+        sendResponse({ success: false });
+      });
+    return true;
+  }
+
+  if (message.type === "RENAME_SCREENSHOT") {
+    relayToOffscreen<{ success?: boolean; reason?: string }>("OFFSCREEN_RENAME_SCREENSHOT", {
+      folderName: message.folderName,
+      oldFilename: message.oldFilename,
+      newFilename: message.newFilename,
+    })
+      .then((response) => sendResponse({ success: response?.success ?? false, reason: response?.reason }))
+      .catch((error) => {
+        console.error("BeHeld: failed to rename screenshot", error);
+        sendResponse({ success: false });
+      });
+    return true;
+  }
+
   if (message.type === "ADD_CLIPBOARD_ITEM") {
     relayToOffscreen<{ items?: unknown[] }>("OFFSCREEN_ADD_CLIPBOARD_ITEM", {
       itemType: message.itemType,
       content: message.content,
     })
-      .then((response) => sendResponse({ items: response?.items ?? [] }))
+      .then((response) => {
+        const items = response?.items ?? [];
+        broadcastClipboardSync(items);
+        sendResponse({ items });
+      })
       .catch((error) => {
         console.error("BeHeld: failed to add clipboard item", error);
         sendResponse({ items: [] });
@@ -270,7 +343,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     relayToOffscreen<{ items?: unknown[] }>("OFFSCREEN_DELETE_CLIPBOARD_ITEM", {
       id: message.id,
     })
-      .then((response) => sendResponse({ items: response?.items ?? [] }))
+      .then((response) => {
+        const items = response?.items ?? [];
+        broadcastClipboardSync(items);
+        sendResponse({ items });
+      })
       .catch((error) => {
         console.error("BeHeld: failed to delete clipboard item", error);
         sendResponse({ items: [] });

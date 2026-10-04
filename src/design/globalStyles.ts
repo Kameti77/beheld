@@ -78,6 +78,16 @@ const css = `
 }
 .bh-row:hover { background: ${color.bgHover}; }
 
+/* Signals "click to rename" on a name label nested inside a row that otherwise
+   toggles something else on click (e.g. a folder row that expands/collapses). */
+.bh-rename-target {
+  border-radius: ${radius.sm}px;
+}
+.bh-rename-target:hover {
+  text-decoration: underline;
+  text-decoration-color: ${color.textMuted};
+}
+
 .bh-icon-btn {
   display: inline-flex;
   align-items: center;

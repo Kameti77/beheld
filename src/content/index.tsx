@@ -436,6 +436,43 @@ function MenuItem({
   );
 }
 
+// A speech-bubble callout with a small triangle pointing right, toward the icon
+// rail it's explaining. Stacked in a column (see "prompt" state below) so each
+// one's vertical position lines up with the icon it describes.
+function renderCalloutBubble(text: string) {
+  return (
+    <div
+      key={text}
+      style={{
+        background: color.bgSurface,
+        color: color.textPrimary,
+        padding: "10px 14px",
+        borderRadius: `${radius.md}px`,
+        fontSize: font.size.base,
+        lineHeight: "1.5",
+        boxShadow: shadow.md,
+        position: "relative",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+      <div
+        style={{
+          position: "absolute",
+          right: "-8px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          width: 0,
+          height: 0,
+          borderTop: "6px solid transparent",
+          borderBottom: "6px solid transparent",
+          borderLeft: `8px solid ${color.bgSurface}`,
+        }}
+      />
+    </div>
+  );
+}
+
 // ── STRIP COMPONENT ────────────────────────────────────────
 function DecisionStrip({
   dataUrl,
@@ -788,35 +825,12 @@ function DecisionStrip({
       ) : (
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {state === "prompt" && (
-          <div
-            style={{
-              background: color.bgSurface,
-              color: color.textPrimary,
-              padding: "10px 14px",
-              borderRadius: `${radius.md}px`,
-              fontSize: font.size.base,
-              lineHeight: "1.5",
-              marginRight: "8px",
-              marginTop: "10px",
-              boxShadow: shadow.md,
-              position: "relative",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Save screenshot somewhere else?
-            <div
-              style={{
-                position: "absolute",
-                right: "-8px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                width: 0,
-                height: 0,
-                borderTop: "6px solid transparent",
-                borderBottom: "6px solid transparent",
-                borderLeft: `8px solid ${color.bgSurface}`,
-              }}
-            />
+          // Stacked with the same top padding/gap as the icon rail's own buttons below,
+          // so each callout lines up with the icon it's explaining (folder, then copy)
+          // instead of needing hand-tuned pixel offsets to stay in sync with that rail.
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "10px 0", marginRight: "8px" }}>
+            {renderCalloutBubble("Save screenshot somewhere else?")}
+            {dataUrl && renderCalloutBubble("Copy only — nothing is saved")}
           </div>
         )}
 
@@ -999,7 +1013,11 @@ function DecisionStrip({
             </button>
           </div>
 
-          <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} />
+          <div style={{ fontSize: "9px", color: color.textMuted, padding: "0 2px", lineHeight: 1.4 }}>
+            Drag to paste · click to copy
+          </div>
+
+          <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} loading={clipboard.loading} />
         </div>
       )}
     </div>
@@ -1049,6 +1067,21 @@ function waitForPaint(): Promise<void> {
   });
 }
 
+// BeHeld's own injected panels, hidden momentarily so a capture never includes them.
+const BEHELD_UI_ROOT_IDS = ["beheld-strip-root", "beheld-library-root", "beheld-crop-root"];
+
+function setBeheldUIHidden(hidden: boolean): boolean {
+  let foundAny = false;
+  BEHELD_UI_ROOT_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      foundAny = true;
+      el.style.visibility = hidden ? "hidden" : "visible";
+    }
+  });
+  return foundAny;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1085,6 +1118,11 @@ async function runFullPageCapture() {
     }
   });
 
+  // If the strip/library/crop panel happened to be open when full-page capture
+  // started, keep BeHeld's own UI out of every stitched slice.
+  const hadBeheldUI = setBeheldUIHidden(true);
+  if (hadBeheldUI) await waitForPaint();
+
   const captures: { dataUrl: string; scrollY: number }[] = [];
 
   try {
@@ -1120,6 +1158,7 @@ async function runFullPageCapture() {
       el.style.visibility = originalVisibility;
     });
     window.scrollTo(originalScrollX, originalScrollY);
+    if (hadBeheldUI) setBeheldUIHidden(false);
   }
 
   if (captures.length === 0) return;
@@ -1151,12 +1190,23 @@ async function runFullPageCapture() {
 }
 
 // ── MOUNT ──────────────────────────────────────────────────
+function closeLibraryIfOpen() {
+  const existing = document.getElementById("beheld-library-root");
+  if (existing) existing.remove();
+}
+
+function closeStripIfOpen() {
+  const existing = document.getElementById("beheld-strip-root");
+  if (existing) existing.remove();
+}
+
 function mountStrip(dataUrl: string | null, folders: string[], startWithClipboardOpen?: boolean) {
   injectDesignSystemStyles();
   closeCropOverlayIfOpen();
+  // Only one BeHeld panel should be visible at a time — opening the strip closes the library.
+  closeLibraryIfOpen();
 
-  const existing = document.getElementById("beheld-strip-root");
-  if (existing) existing.remove();
+  closeStripIfOpen();
 
   const container = document.createElement("div");
   container.id = "beheld-strip-root";
@@ -1169,9 +1219,10 @@ function mountStrip(dataUrl: string | null, folders: string[], startWithClipboar
 
 function mountLibrary(folders: string[]) {
   injectDesignSystemStyles();
+  // Only one BeHeld panel should be visible at a time — opening the library closes the strip.
+  closeStripIfOpen();
 
-  const existing = document.getElementById("beheld-library-root");
-  if (existing) existing.remove();
+  closeLibraryIfOpen();
 
   const container = document.createElement("div");
   container.id = "beheld-library-root";
@@ -1181,7 +1232,7 @@ function mountLibrary(folders: string[]) {
 }
 
 // ── LISTEN FOR MESSAGE FROM SERVICE WORKER ─────────────────
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "SHOW_STRIP") {
     if (message.dataUrl) showCaptureFlash();
     mountStrip(message.dataUrl ?? null, message.folders ?? ["Temp"], message.openClipboard);
@@ -1193,5 +1244,25 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "START_FULL_PAGE_CAPTURE") {
     runFullPageCapture();
+  }
+
+  if (message.type === "CLIPBOARD_SYNC" && message.items) {
+    notifyClipboardListeners(message.items);
+  }
+
+  // Asked by the service worker right before a single-shot capture, so BeHeld's own
+  // panel never ends up baked into the screenshot. Only waits for a repaint when
+  // there was actually something visible to hide.
+  if (message.type === "HIDE_BEHELD_UI") {
+    const hadUI = setBeheldUIHidden(true);
+    if (hadUI) waitForPaint().then(() => sendResponse({ success: true }));
+    else sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === "SHOW_BEHELD_UI") {
+    setBeheldUIHidden(false);
+    sendResponse({ success: true });
+    return true;
   }
 });

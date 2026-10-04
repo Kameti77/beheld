@@ -2,15 +2,23 @@ import { useEffect, useState } from "react";
 import { Button } from "../design/Button";
 import { color, font, radius, shadow, space } from "../design/tokens";
 import {
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
   IconClipboard,
   IconClose,
+  IconEdit,
   IconFolder,
   IconFolderOpen,
   IconTrash,
 } from "../design/icons";
 import { ClipboardList, useClipboardItems } from "./ClipboardPanel";
+
+// Strips characters that are invalid (or awkward) in a filesystem name on any
+// major OS, so a pasted or typed rename can't silently fail on disk.
+function sanitizeNamePart(input: string): string {
+  return input.replace(/[\\/:*?"<>|]/g, "").trim();
+}
 
 type LibraryTab = "folders" | "clipboard";
 
@@ -40,6 +48,13 @@ function FolderThumbnail({
   onConfirmDelete,
   onCancelDelete,
   onImageClick,
+  isRenaming,
+  renameValue,
+  renameError,
+  onRenameClick,
+  onRenameValueChange,
+  onRenameSubmit,
+  onRenameCancel,
 }: {
   item: FolderContentItem;
   isConfirming: boolean;
@@ -47,8 +62,16 @@ function FolderThumbnail({
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
   onImageClick: () => void;
+  isRenaming: boolean;
+  renameValue: string;
+  renameError: string | null;
+  onRenameClick: () => void;
+  onRenameValueChange: (value: string) => void;
+  onRenameSubmit: () => void;
+  onRenameCancel: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
+  const showOverlayButtons = !isConfirming && !isRenaming;
 
   return (
     <div style={{ width: 84 }}>
@@ -57,7 +80,7 @@ function FolderThumbnail({
           src={item.thumbnailDataUrl}
           alt={item.filename}
           onLoad={() => setLoaded(true)}
-          onClick={() => !isConfirming && onImageClick()}
+          onClick={() => showOverlayButtons && onImageClick()}
           style={{
             width: "100%",
             height: "100%",
@@ -66,10 +89,20 @@ function FolderThumbnail({
             border: `1px solid ${color.border}`,
             opacity: loaded ? 1 : 0,
             transition: "opacity 180ms ease",
-            cursor: isConfirming ? "default" : "zoom-in",
+            cursor: showOverlayButtons ? "zoom-in" : "default",
           }}
         />
-        {!isConfirming && (
+        {showOverlayButtons && (
+          <button
+            className="bh-icon-btn bh-thumbnail-delete"
+            onClick={onRenameClick}
+            title={`Rename ${item.filename}`}
+            style={{ position: "absolute", top: 4, left: 4, background: color.bgElevated }}
+          >
+            <IconEdit size={13} />
+          </button>
+        )}
+        {showOverlayButtons && (
           <button
             className="bh-icon-btn bh-icon-btn--danger bh-thumbnail-delete"
             onClick={onDeleteClick}
@@ -89,6 +122,35 @@ function FolderThumbnail({
           </div>
         </div>
       )}
+      {isRenaming && (
+        <div style={{ marginTop: space.xs, display: "flex", flexDirection: "column", gap: 4 }}>
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(event) => onRenameValueChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onRenameSubmit();
+              if (event.key === "Escape") onRenameCancel();
+            }}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              fontSize: font.size.xs,
+              fontFamily: font.family,
+              padding: "3px 5px",
+              borderRadius: radius.sm,
+              border: `1px solid ${color.borderStrong}`,
+              background: color.bgBase,
+              color: color.textPrimary,
+            }}
+          />
+          {renameError && <div style={{ color: color.error, fontSize: 10, lineHeight: 1.3 }}>{renameError}</div>}
+          <div style={{ display: "flex", justifyContent: "center", gap: space.sm }}>
+            <button className="bh-link-button" onClick={onRenameSubmit}>Save</button>
+            <button className="bh-link-button" onClick={onRenameCancel} style={{ color: color.textMuted }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -102,6 +164,12 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
   const [loadingFolder, setLoadingFolder] = useState<string | null>(null);
   const [confirmingDeleteFolder, setConfirmingDeleteFolder] = useState<string | null>(null);
   const [confirmingDeleteScreenshot, setConfirmingDeleteScreenshot] = useState<string | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameFolderValue, setRenameFolderValue] = useState("");
+  const [renameFolderError, setRenameFolderError] = useState<string | null>(null);
+  const [renamingScreenshot, setRenamingScreenshot] = useState<string | null>(null);
+  const [renameScreenshotValue, setRenameScreenshotValue] = useState("");
+  const [renameScreenshotError, setRenameScreenshotError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const clipboard = useClipboardItems();
 
@@ -167,6 +235,93 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
     });
   };
 
+  const startRenameFolder = (name: string) => {
+    setRenamingFolder(name);
+    setRenameFolderValue(name);
+    setRenameFolderError(null);
+  };
+
+  const cancelRenameFolder = () => {
+    setRenamingFolder(null);
+    setRenameFolderError(null);
+  };
+
+  const submitRenameFolder = (oldName: string) => {
+    const newName = sanitizeNamePart(renameFolderValue);
+    if (!newName || newName === oldName) {
+      cancelRenameFolder();
+      return;
+    }
+    chrome.runtime.sendMessage({ type: "RENAME_FOLDER", oldName, newName }, (response) => {
+      if (response?.success) {
+        setLocalFolders(response.folders ?? []);
+        setFolderContents((previous) => {
+          const current = previous[oldName];
+          if (!current) return previous;
+          const next = { ...previous };
+          delete next[oldName];
+          next[newName] = current;
+          return next;
+        });
+        setExpandedFolder((previous) => (previous === oldName ? newName : previous));
+        cancelRenameFolder();
+      } else {
+        setRenameFolderError(
+          response?.reason === "exists" ? "A folder with that name already exists." : "Couldn't rename folder."
+        );
+      }
+    });
+  };
+
+  const startRenameScreenshot = (folder: string, filename: string) => {
+    setRenamingScreenshot(`${folder}|${filename}`);
+    setRenameScreenshotValue(filename.replace(/\.png$/i, ""));
+    setRenameScreenshotError(null);
+  };
+
+  const cancelRenameScreenshot = () => {
+    setRenamingScreenshot(null);
+    setRenameScreenshotError(null);
+  };
+
+  const submitRenameScreenshot = (folder: string, oldFilename: string) => {
+    const base = sanitizeNamePart(renameScreenshotValue);
+    if (!base) {
+      cancelRenameScreenshot();
+      return;
+    }
+    const newFilename = base.toLowerCase().endsWith(".png") ? base : `${base}.png`;
+    if (newFilename === oldFilename) {
+      cancelRenameScreenshot();
+      return;
+    }
+    chrome.runtime.sendMessage(
+      { type: "RENAME_SCREENSHOT", folderName: folder, oldFilename, newFilename },
+      (response) => {
+        if (response?.success) {
+          setFolderContents((previous) => {
+            const current = previous[folder];
+            if (!current) return previous;
+            return {
+              ...previous,
+              [folder]: {
+                ...current,
+                items: current.items.map((item) =>
+                  item.filename === oldFilename ? { ...item, filename: newFilename } : item
+                ),
+              },
+            };
+          });
+          cancelRenameScreenshot();
+        } else {
+          setRenameScreenshotError(
+            response?.reason === "exists" ? "A screenshot with that name already exists." : "Couldn't rename."
+          );
+        }
+      }
+    );
+  };
+
   const openLightbox = (folder: string, filename: string) => {
     setLightbox({ folder, filename, loading: true, error: false, dataUrl: null });
     chrome.runtime.sendMessage({ type: "GET_SCREENSHOT", folderName: folder, filename }, (response) => {
@@ -191,11 +346,69 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
             <Button variant="destructive" size="sm" onClick={() => handleDeleteFolder(folder)}>Delete</Button>
             <Button variant="tertiary" size="sm" onClick={() => setConfirmingDeleteFolder(null)}>Cancel</Button>
           </div>
+        ) : renamingFolder === folder ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: space.sm,
+                  background: color.bgElevated,
+                  border: `1px solid ${color.borderBrand}`,
+                  borderRadius: radius.md,
+                  padding: `${space.sm}px ${space.md}px`,
+                }}
+              >
+                {isTemp ? <IconFolderOpen size={15} color={color.warning} /> : <IconFolderOpen size={15} color={color.brand} />}
+                <input
+                  autoFocus
+                  value={renameFolderValue}
+                  onChange={(event) => setRenameFolderValue(event.target.value)}
+                  onFocus={(event) => event.target.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") submitRenameFolder(folder);
+                    if (event.key === "Escape") cancelRenameFolder();
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    boxSizing: "border-box",
+                    fontSize: font.size.base,
+                    fontFamily: font.family,
+                    padding: "2px 4px",
+                    borderRadius: radius.sm,
+                    border: `1px solid ${color.borderStrong}`,
+                    background: color.bgBase,
+                    color: color.textPrimary,
+                  }}
+                />
+              </div>
+              <button className="bh-icon-btn" onClick={() => submitRenameFolder(folder)} title="Save">
+                <IconCheck size={14} />
+              </button>
+              <button className="bh-icon-btn" onClick={cancelRenameFolder} title="Cancel">
+                <IconClose size={14} />
+              </button>
+            </div>
+            {renameFolderError && (
+              <div style={{ color: color.error, fontSize: font.size.xs, padding: "0 6px" }}>{renameFolderError}</div>
+            )}
+          </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-            <button
+            <div
               className="bh-row"
+              role="button"
+              tabIndex={0}
               onClick={() => handleToggleFolder(folder)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleToggleFolder(folder);
+                }
+              }}
               aria-expanded={isOpen}
               style={{
                 flex: 1,
@@ -210,13 +423,22 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
                 fontFamily: font.family,
                 fontSize: font.size.base,
                 cursor: "pointer",
-                textAlign: "left",
               }}
             >
               {isOpen ? <IconFolderOpen size={15} color={isTemp ? color.warning : color.brand} /> : <IconFolder size={15} color={isTemp ? color.warning : color.brand} />}
-              <span style={{ flex: 1 }}>{folder}</span>
+              <span
+                className="bh-rename-target"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  startRenameFolder(folder);
+                }}
+                title={`Rename ${folder}`}
+                style={{ flex: 1, padding: "1px 3px", marginLeft: "-3px", cursor: "text" }}
+              >
+                {folder}
+              </span>
               {isOpen ? <IconChevronDown size={15} color={color.textMuted} /> : <IconChevronRight size={15} color={color.textMuted} />}
-            </button>
+            </div>
             <button className="bh-icon-btn bh-icon-btn--danger" onClick={() => setConfirmingDeleteFolder(folder)} title={`Delete ${folder}`}>
               <IconTrash size={14} />
             </button>
@@ -242,7 +464,24 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: space.sm }}>
                   {contents?.items.map((item) => {
                     const key = `${folder}|${item.filename}`;
-                    return <FolderThumbnail key={item.filename} item={item} isConfirming={confirmingDeleteScreenshot === key} onDeleteClick={() => setConfirmingDeleteScreenshot(key)} onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)} onCancelDelete={() => setConfirmingDeleteScreenshot(null)} onImageClick={() => openLightbox(folder, item.filename)} />;
+                    return (
+                      <FolderThumbnail
+                        key={item.filename}
+                        item={item}
+                        isConfirming={confirmingDeleteScreenshot === key}
+                        onDeleteClick={() => setConfirmingDeleteScreenshot(key)}
+                        onConfirmDelete={() => handleDeleteScreenshot(folder, item.filename)}
+                        onCancelDelete={() => setConfirmingDeleteScreenshot(null)}
+                        onImageClick={() => openLightbox(folder, item.filename)}
+                        isRenaming={renamingScreenshot === key}
+                        renameValue={renameScreenshotValue}
+                        renameError={renamingScreenshot === key ? renameScreenshotError : null}
+                        onRenameClick={() => startRenameScreenshot(folder, item.filename)}
+                        onRenameValueChange={setRenameScreenshotValue}
+                        onRenameSubmit={() => submitRenameScreenshot(folder, item.filename)}
+                        onRenameCancel={cancelRenameScreenshot}
+                      />
+                    );
                   })}
                 </div>
                 {contents?.hasOlder && <div style={{ marginTop: space.md }}><button className="bh-link-button" onClick={() => loadFolderContents(folder, true)}>Show older</button></div>}
@@ -287,11 +526,14 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
 
         {expandedView === "clipboard" && (
           <section style={{ width: 336, background: color.bgSurface, borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`, boxShadow: shadow.lg, padding: space.lg }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: space.md }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
               <h2 style={{ margin: 0, color: color.textPrimary, fontSize: font.size.md, fontWeight: font.weight.semibold }}>Clipboard</h2>
               <span style={{ color: color.textMuted, fontSize: font.size.xs }}>{clipboard.items.length} item{clipboard.items.length === 1 ? "" : "s"}</span>
             </div>
-            <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" />
+            <p style={{ margin: `${space.xs}px 0 ${space.md}px`, color: color.textMuted, fontSize: font.size.xs, lineHeight: 1.45 }}>
+              Showing the last 7 days. Drag an item onto a text box to paste it, or click to copy again.
+            </p>
+            <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" loading={clipboard.loading} />
           </section>
         )}
       </div>
