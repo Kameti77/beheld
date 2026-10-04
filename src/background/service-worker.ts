@@ -33,14 +33,21 @@ async function getFolders(): Promise<string[]> {
   return response?.folders ?? ["Temp"];
 }
 
-// Tells every open content script (any tab) and extension page about the latest
-// clipboard list, so a panel left open elsewhere reflects a copy/delete that just
-// happened somewhere else instead of only updating on its own next explicit load.
+// Tells every open content script about the latest clipboard list, so a panel left
+// open elsewhere reflects a copy/delete that just happened somewhere else instead of
+// only updating on its own next explicit load. chrome.runtime.sendMessage from the
+// background only reaches other extension pages (popup, offscreen) — it never reaches
+// a content script in a tab, so this has to enumerate tabs and target each one.
 function broadcastClipboardSync(items: unknown[]) {
-  chrome.runtime.sendMessage({ type: "CLIPBOARD_SYNC", items }, () => {
-    // No listener anywhere (no tab currently has BeHeld injected) sets lastError —
-    // reading it here marks it handled instead of logging an unchecked-error warning.
-    void chrome.runtime.lastError;
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id == null) continue;
+      chrome.tabs.sendMessage(tab.id, { type: "CLIPBOARD_SYNC", items }, () => {
+        // Most tabs have no BeHeld content script injected — reading lastError here
+        // marks it handled instead of logging an unchecked-error warning for each one.
+        void chrome.runtime.lastError;
+      });
+    }
   });
 }
 

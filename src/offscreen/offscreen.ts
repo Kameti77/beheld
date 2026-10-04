@@ -4,11 +4,20 @@ import { jsPDF } from "jspdf";
 const CLIPBOARD_KEY = "beheld-clipboard";
 const MAX_CLIPBOARD_ITEMS = 50;
 
+// Shared with the saved-screenshot folder view below, which applies the same
+// last-7-days display window.
+const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 interface ClipboardEntry {
   id: string;
   itemType: "text" | "image";
   content: string;
   timestamp: number;
+}
+
+function filterRecentClipboardItems(items: ClipboardEntry[]): ClipboardEntry[] {
+  const cutoff = Date.now() - RECENT_WINDOW_MS;
+  return items.filter((item) => item.timestamp >= cutoff);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -56,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "OFFSCREEN_GET_CLIPBOARD_ITEMS") {
     get<ClipboardEntry[]>(CLIPBOARD_KEY).then((items) => {
-      sendResponse({ items: items ?? [] });
+      sendResponse({ items: filterRecentClipboardItems(items ?? []) });
     });
     return true;
   }
@@ -380,14 +389,16 @@ async function addClipboardItem(
 
   const updated = [entry, ...items].slice(0, MAX_CLIPBOARD_ITEMS);
   await set(CLIPBOARD_KEY, updated);
-  return updated;
+  // Older-than-7-days entries stay in storage (consistent with how saved screenshot
+  // folders work — nothing is deleted on their behalf), just not surfaced to the UI.
+  return filterRecentClipboardItems(updated);
 }
 
 async function deleteClipboardItem(id: string): Promise<ClipboardEntry[]> {
   const items = await get<ClipboardEntry[]>(CLIPBOARD_KEY) ?? [];
   const updated = items.filter((item) => item.id !== id);
   await set(CLIPBOARD_KEY, updated);
-  return updated;
+  return filterRecentClipboardItems(updated);
 }
 
 interface FolderContentItem {
@@ -400,8 +411,6 @@ interface FolderContentsResult {
   hasOlder: boolean;
   permissionDenied: boolean;
 }
-
-const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 const THUMBNAIL_MAX_SIZE = 120;
 

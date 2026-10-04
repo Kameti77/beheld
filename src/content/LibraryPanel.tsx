@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../design/Button";
 import { color, font, radius, shadow, space } from "../design/tokens";
 import {
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
   IconClipboard,
@@ -11,13 +12,13 @@ import {
   IconFolderOpen,
   IconTrash,
 } from "../design/icons";
+import { ClipboardList, useClipboardItems } from "./ClipboardPanel";
 
 // Strips characters that are invalid (or awkward) in a filesystem name on any
 // major OS, so a pasted or typed rename can't silently fail on disk.
 function sanitizeNamePart(input: string): string {
   return input.replace(/[\\/:*?"<>|]/g, "").trim();
 }
-import { ClipboardList, useClipboardItems } from "./ClipboardPanel";
 
 type LibraryTab = "folders" | "clipboard";
 
@@ -346,38 +347,68 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
             <Button variant="tertiary" size="sm" onClick={() => setConfirmingDeleteFolder(null)}>Cancel</Button>
           </div>
         ) : renamingFolder === folder ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: `${space.sm}px` }}>
-            <input
-              autoFocus
-              value={renameFolderValue}
-              onChange={(event) => setRenameFolderValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") submitRenameFolder(folder);
-                if (event.key === "Escape") cancelRenameFolder();
-              }}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                fontSize: font.size.base,
-                fontFamily: font.family,
-                padding: `${space.xs}px ${space.sm}px`,
-                borderRadius: radius.sm,
-                border: `1px solid ${color.borderStrong}`,
-                background: color.bgBase,
-                color: color.textPrimary,
-              }}
-            />
-            {renameFolderError && <div style={{ color: color.error, fontSize: font.size.xs }}>{renameFolderError}</div>}
-            <div style={{ display: "flex", gap: space.sm }}>
-              <Button variant="primary" size="sm" onClick={() => submitRenameFolder(folder)}>Save</Button>
-              <Button variant="tertiary" size="sm" onClick={cancelRenameFolder}>Cancel</Button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: space.sm,
+                  background: color.bgElevated,
+                  border: `1px solid ${color.borderBrand}`,
+                  borderRadius: radius.md,
+                  padding: `${space.sm}px ${space.md}px`,
+                }}
+              >
+                {isTemp ? <IconFolderOpen size={15} color={color.warning} /> : <IconFolderOpen size={15} color={color.brand} />}
+                <input
+                  autoFocus
+                  value={renameFolderValue}
+                  onChange={(event) => setRenameFolderValue(event.target.value)}
+                  onFocus={(event) => event.target.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") submitRenameFolder(folder);
+                    if (event.key === "Escape") cancelRenameFolder();
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    boxSizing: "border-box",
+                    fontSize: font.size.base,
+                    fontFamily: font.family,
+                    padding: "2px 4px",
+                    borderRadius: radius.sm,
+                    border: `1px solid ${color.borderStrong}`,
+                    background: color.bgBase,
+                    color: color.textPrimary,
+                  }}
+                />
+              </div>
+              <button className="bh-icon-btn" onClick={() => submitRenameFolder(folder)} title="Save">
+                <IconCheck size={14} />
+              </button>
+              <button className="bh-icon-btn" onClick={cancelRenameFolder} title="Cancel">
+                <IconClose size={14} />
+              </button>
             </div>
+            {renameFolderError && (
+              <div style={{ color: color.error, fontSize: font.size.xs, padding: "0 6px" }}>{renameFolderError}</div>
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-            <button
+            <div
               className="bh-row"
+              role="button"
+              tabIndex={0}
               onClick={() => handleToggleFolder(folder)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleToggleFolder(folder);
+                }
+              }}
               aria-expanded={isOpen}
               style={{
                 flex: 1,
@@ -392,16 +423,22 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
                 fontFamily: font.family,
                 fontSize: font.size.base,
                 cursor: "pointer",
-                textAlign: "left",
               }}
             >
               {isOpen ? <IconFolderOpen size={15} color={isTemp ? color.warning : color.brand} /> : <IconFolder size={15} color={isTemp ? color.warning : color.brand} />}
-              <span style={{ flex: 1 }}>{folder}</span>
+              <span
+                className="bh-rename-target"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  startRenameFolder(folder);
+                }}
+                title={`Rename ${folder}`}
+                style={{ flex: 1, padding: "1px 3px", marginLeft: "-3px", cursor: "text" }}
+              >
+                {folder}
+              </span>
               {isOpen ? <IconChevronDown size={15} color={color.textMuted} /> : <IconChevronRight size={15} color={color.textMuted} />}
-            </button>
-            <button className="bh-icon-btn" onClick={() => startRenameFolder(folder)} title={`Rename ${folder}`}>
-              <IconEdit size={14} />
-            </button>
+            </div>
             <button className="bh-icon-btn bh-icon-btn--danger" onClick={() => setConfirmingDeleteFolder(folder)} title={`Delete ${folder}`}>
               <IconTrash size={14} />
             </button>
@@ -489,10 +526,13 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
 
         {expandedView === "clipboard" && (
           <section style={{ width: 336, background: color.bgSurface, borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`, boxShadow: shadow.lg, padding: space.lg }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: space.md }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
               <h2 style={{ margin: 0, color: color.textPrimary, fontSize: font.size.md, fontWeight: font.weight.semibold }}>Clipboard</h2>
               <span style={{ color: color.textMuted, fontSize: font.size.xs }}>{clipboard.items.length} item{clipboard.items.length === 1 ? "" : "s"}</span>
             </div>
+            <p style={{ margin: `${space.xs}px 0 ${space.md}px`, color: color.textMuted, fontSize: font.size.xs, lineHeight: 1.45 }}>
+              Showing the last 7 days. Drag an item onto a text box to paste it, or click to copy again.
+            </p>
             <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" loading={clipboard.loading} />
           </section>
         )}

@@ -133,9 +133,17 @@ export function ClipboardList({
             draggable
             onDragStart={(event) => {
               // Native HTML5 drag-and-drop: a browser text input/textarea/contenteditable
-              // handles a "text/plain" drop on its own (insert at the drop position) with
-              // no listener needed on the page's side, so a screenshot's data URL also
-              // works as a best-effort drop payload even though it isn't text to read.
+              // handles a drop on its own (insert at the drop position) with no listener
+              // needed on the page's side — it just reads whichever format it understands.
+              // A plain <input>/<textarea> only ever understands "text/plain" (it has no
+              // way to display an image, full stop), but a contenteditable or rich-text
+              // drop target (Gmail, Slack, Notion, Google Docs, ...) looks for "text/html"
+              // first and will render an actual <img>, so a screenshot needs that format
+              // too or it lands as a wall of base64 text instead of the picture itself.
+              if (item.itemType === "image") {
+                event.dataTransfer.setData("text/html", `<img src="${item.content}" alt="Screenshot">`);
+                event.dataTransfer.setData("text/uri-list", item.content);
+              }
               event.dataTransfer.setData("text/plain", item.content);
               event.dataTransfer.effectAllowed = "copy";
             }}

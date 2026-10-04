@@ -436,6 +436,43 @@ function MenuItem({
   );
 }
 
+// A speech-bubble callout with a small triangle pointing right, toward the icon
+// rail it's explaining. Stacked in a column (see "prompt" state below) so each
+// one's vertical position lines up with the icon it describes.
+function renderCalloutBubble(text: string) {
+  return (
+    <div
+      key={text}
+      style={{
+        background: color.bgSurface,
+        color: color.textPrimary,
+        padding: "10px 14px",
+        borderRadius: `${radius.md}px`,
+        fontSize: font.size.base,
+        lineHeight: "1.5",
+        boxShadow: shadow.md,
+        position: "relative",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+      <div
+        style={{
+          position: "absolute",
+          right: "-8px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          width: 0,
+          height: 0,
+          borderTop: "6px solid transparent",
+          borderBottom: "6px solid transparent",
+          borderLeft: `8px solid ${color.bgSurface}`,
+        }}
+      />
+    </div>
+  );
+}
+
 // ── STRIP COMPONENT ────────────────────────────────────────
 function DecisionStrip({
   dataUrl,
@@ -680,16 +717,6 @@ function DecisionStrip({
     );
   };
 
-  // Mirrors the icon-rail "Copy to clipboard" button, but lives inside the folder
-  // panel too — spelled out precisely, since a bare clipboard icon next to a list
-  // of save destinations reads ambiguously about whether it also saves a copy.
-  const handleCopyOnly = () => {
-    if (!workingDataUrl) return;
-    copyImageToClipboard(workingDataUrl).then(() => {
-      showConfirmation("success", "Copied — not saved to a folder");
-    });
-  };
-
   const renderFolderRow = (folder: string) => {
     const isTemp = folder === "Temp";
     return (
@@ -798,35 +825,12 @@ function DecisionStrip({
       ) : (
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {state === "prompt" && (
-          <div
-            style={{
-              background: color.bgSurface,
-              color: color.textPrimary,
-              padding: "10px 14px",
-              borderRadius: `${radius.md}px`,
-              fontSize: font.size.base,
-              lineHeight: "1.5",
-              marginRight: "8px",
-              marginTop: "10px",
-              boxShadow: shadow.md,
-              position: "relative",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Save screenshot somewhere else?
-            <div
-              style={{
-                position: "absolute",
-                right: "-8px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                width: 0,
-                height: 0,
-                borderTop: "6px solid transparent",
-                borderBottom: "6px solid transparent",
-                borderLeft: `8px solid ${color.bgSurface}`,
-              }}
-            />
+          // Stacked with the same top padding/gap as the icon rail's own buttons below,
+          // so each callout lines up with the icon it's explaining (folder, then copy)
+          // instead of needing hand-tuned pixel offsets to stay in sync with that rail.
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "10px 0", marginRight: "8px" }}>
+            {renderCalloutBubble("Save screenshot somewhere else?")}
+            {dataUrl && renderCalloutBubble("Copy only — nothing is saved")}
           </div>
         )}
 
@@ -918,18 +922,6 @@ function DecisionStrip({
                 Quick-saves to the folder you chose once in Settings
               </span>
             </button>
-
-            <div style={{ height: 1, background: color.border, margin: "4px 6px" }} />
-
-            <button className="bh-menu-item" onClick={handleCopyOnly} style={{ flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <IconCopy size={15} />
-                Copy only — don't save
-              </span>
-              <span style={{ fontSize: font.size.xs, color: color.textMuted, paddingLeft: "23px" }}>
-                Copies the image to your clipboard. Nothing is written to a folder.
-              </span>
-            </button>
           </div>
         )}
 
@@ -1019,6 +1011,10 @@ function DecisionStrip({
             <button className="bh-icon-btn" onClick={() => setClipboardOpen(false)} title="Close" style={{ width: 20, height: 20 }}>
               <IconClose size={12} />
             </button>
+          </div>
+
+          <div style={{ fontSize: "9px", color: color.textMuted, padding: "0 2px", lineHeight: 1.4 }}>
+            Drag to paste · click to copy
           </div>
 
           <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} loading={clipboard.loading} />
