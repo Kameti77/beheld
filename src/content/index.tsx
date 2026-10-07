@@ -7,7 +7,7 @@ import {
   ClipboardList,
 } from "./ClipboardPanel";
 import { LibraryPanel } from "./LibraryPanel";
-import { color, radius, font, shadow } from "../design/tokens";
+import { color, radius, font, shadow, space } from "../design/tokens";
 import { injectDesignSystemStyles } from "../design/globalStyles";
 import {
   IconFolder,
@@ -506,6 +506,12 @@ function DecisionStrip({
     clipboardOpenRef.current = clipboardOpen;
   }, [clipboardOpen]);
 
+  // Set true the moment the user does ANYTHING with this screenshot (saves it
+  // somewhere, copies it, exports it, or explicitly dismisses it) — read by the
+  // Stage 2 timer below, which otherwise re-schedules itself every time a completed
+  // action's own confirmation cycles state back through "dismissed".
+  const actedRef = useRef(false);
+
   // Stage 1: collapse prompt after 4 seconds — paused while the clipboard panel is open
   // or a confirmation is showing.
   useEffect(() => {
@@ -517,17 +523,24 @@ function DecisionStrip({
   }, [state, clipboardOpen, confirmation]);
 
   // Stage 2: fade out strip after 8 more seconds — paused while the clipboard panel is open
-  // or a confirmation is showing.
+  // or a confirmation is showing. If the user truly never acted on this screenshot (no
+  // save, no copy, no explicit dismiss) and a default folder is configured, quietly save
+  // there instead of letting it just vanish — showConfirmation's own hold/fade cycle takes
+  // over the actual hide from this point, same as every other completed action.
   useEffect(() => {
     if (clipboardOpen || confirmation) return;
     if (state === "dismissed") {
-      const timer2 = setTimeout(() => {
+      const timer2 = setTimeout(async () => {
+        if (!actedRef.current && workingDataUrl) {
+          const saved = await saveToDefaultFolder(workingDataUrl);
+          if (saved) return;
+        }
         setFading(true);
         setTimeout(() => setVisible(false), 600);
       }, 8000);
       return () => clearTimeout(timer2);
     }
-  }, [state, clipboardOpen, confirmation]);
+  }, [state, clipboardOpen, confirmation, workingDataUrl]);
 
   // Holds the confirmation on screen for its full duration, then starts the fade-out.
   useEffect(() => {
@@ -642,6 +655,7 @@ function DecisionStrip({
           );
         }
 
+        actedRef.current = true;
         showConfirmation(
           "success",
           contained
@@ -686,6 +700,7 @@ function DecisionStrip({
           anchor.remove();
           URL.revokeObjectURL(url);
 
+          actedRef.current = true;
           showConfirmation("success", "Saved as PDF");
         } catch (error) {
           console.error("BeHeld: failed to download PDF", error);
@@ -697,24 +712,46 @@ function DecisionStrip({
     );
   };
 
-  // Quick-saves workingDataUrl (respecting any crop already applied) straight to the
-  // single default folder chosen once in the popup's settings view — see hard platform
-  // fact #3: only a handle picked in the popup can be persisted for silent reuse here.
+  // Quick-saves a dataUrl (respecting any crop already applied) straight to the single
+  // default folder chosen once in the popup's settings view — see hard platform fact #3:
+  // only a handle picked in the popup can be persisted for silent reuse here. Shared by
+  // the manual "Save to default folder" menu item and the Stage 2 inactivity fallback
+  // above; the latter passes silent so a user who configured no default folder (and did
+  // nothing else) just sees the screenshot disappear, not an error they never asked for.
+  const saveToDefaultFolder = (dataUrl: string, silent = false): Promise<boolean> => {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "SAVE_TO_DEFAULT_FOLDER", dataUrl },
+        (response) => {
+          if (response?.success) {
+            actedRef.current = true;
+            showConfirmation("success", "Screenshot saved to default folder");
+            resolve(true);
+          } else {
+            if (!silent) {
+              if (response?.noDefaultSet) {
+                showConfirmation("error", "No default folder set. Choose one in Settings", 2500);
+              } else {
+                console.error("BeHeld: failed to save to default folder", chrome.runtime.lastError);
+                showConfirmation("error", "Something went wrong");
+              }
+            }
+            resolve(false);
+          }
+        }
+      );
+    });
+  };
+
   const handleSaveToDefaultFolder = () => {
     if (!workingDataUrl) return;
-    chrome.runtime.sendMessage(
-      { type: "SAVE_TO_DEFAULT_FOLDER", dataUrl: workingDataUrl },
-      (response) => {
-        if (response?.success) {
-          showConfirmation("success", "Saved to default folder");
-        } else if (response?.noDefaultSet) {
-          showConfirmation("error", "No default folder set. Choose one in Settings", 2500);
-        } else {
-          console.error("BeHeld: failed to save to default folder", chrome.runtime.lastError);
-          showConfirmation("error", "Something went wrong");
-        }
-      }
-    );
+    actedRef.current = true;
+    saveToDefaultFolder(workingDataUrl);
+  };
+
+  const handleDismissScreenshot = () => {
+    actedRef.current = true;
+    showConfirmation("success", "Screenshot dismissed");
   };
 
   const renderFolderRow = (folder: string) => {
@@ -748,6 +785,7 @@ function DecisionStrip({
                   { type: "SAVE_SCREENSHOT", folderName: folder, dataUrl: workingDataUrl },
                   (response) => {
                     if (response?.success) {
+                      actedRef.current = true;
                       showConfirmation("success", `Saved to ${folder}`);
                     } else {
                       console.error(`BeHeld: failed to save to ${folder}`, chrome.runtime.lastError);
@@ -825,16 +863,19 @@ function DecisionStrip({
       ) : (
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {state === "prompt" && (
-          // Each row below is a 28px-tall slot with the same top padding/gap as the
-          // icon rail's own 28px buttons, so centering a bubble within its row (via
-          // alignItems: center) lines its triangle up with that icon's actual vertical
-          // center — the bubble's own (taller) height never pushes it off that mark.
+          // Each row below is a 28px-tall slot with the same top padding/gap as the icon
+          // rail's own 28px buttons, so centering a bubble within its row (via alignItems:
+          // center) lines its triangle up with that icon's actual vertical center — the
+          // bubble's own (taller) height never pushes it off that mark. justifyContent:
+          // flex-end anchors every bubble's right edge (where the triangle sits) to the
+          // same spot regardless of how wide its own text makes it, so a shorter bubble's
+          // triangle doesn't end up short of the rail.
           <div style={{ display: "flex", flexDirection: "column", gap: "12px", paddingTop: "10px", marginRight: "8px" }}>
-            <div style={{ height: "28px", display: "flex", alignItems: "center" }}>
+            <div style={{ height: "28px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
               {renderCalloutBubble("Save screenshot somewhere else?")}
             </div>
             {dataUrl && (
-              <div style={{ height: "28px", display: "flex", alignItems: "center" }}>
+              <div style={{ height: "28px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
                 {renderCalloutBubble("Copy only, nothing is saved")}
               </div>
             )}
@@ -854,8 +895,16 @@ function DecisionStrip({
               boxShadow: shadow.md,
             }}
           >
-            <div style={{ fontSize: font.size.xs, color: color.textMuted, padding: "2px 6px 6px" }}>
-              Where should this go?
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 2px 6px" }}>
+              <span style={{ fontSize: font.size.xs, color: color.textMuted }}>Where should this go?</span>
+              <button
+                className="bh-icon-btn"
+                onClick={handleDismissScreenshot}
+                title="Dismiss screenshot"
+                style={{ width: 20, height: 20 }}
+              >
+                <IconClose size={12} />
+              </button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "4px" }}>
@@ -879,6 +928,7 @@ function DecisionStrip({
                         { type: "SAVE_SCREENSHOT", folderName: trimmedName, dataUrl: workingDataUrl },
                         (response) => {
                           if (response?.success) {
+                            actedRef.current = true;
                             setCreatingFolder(false);
                             setNewFolderName("");
                             showConfirmation("success", `Saved to ${trimmedName}`);
@@ -969,6 +1019,7 @@ function DecisionStrip({
               onClick={(e) => {
                 e.stopPropagation();
                 copyImageToClipboard(workingDataUrl!).then(() => {
+                  actedRef.current = true;
                   showConfirmation("success", "Copied to clipboard");
                 });
               }}
@@ -999,33 +1050,19 @@ function DecisionStrip({
       )}
 
       {clipboardOpen && (
-        <div
-          style={{
-            width: "150px",
-            background: color.bgSurface,
-            borderRadius: `0 0 0 ${radius.md}px`,
-            padding: "8px",
-            boxShadow: shadow.md,
-            display: "flex",
-            flexDirection: "column",
-            gap: "5px",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px" }}>
-            <span style={{ fontSize: "9px", color: color.textMuted, fontWeight: font.weight.medium, letterSpacing: "0.4px", textTransform: "uppercase" }}>
-              Clipboard
-            </span>
-            <button className="bh-icon-btn" onClick={() => setClipboardOpen(false)} title="Close" style={{ width: 20, height: 20 }}>
-              <IconClose size={12} />
-            </button>
+        // Same layout as the Library panel's clipboard section (heading, item count,
+        // caption, list) so the two places a user sees clipboard history look alike.
+        // Closing happens via the rail's clipboard icon toggling off, same as there too.
+        <section style={{ width: 336, background: color.bgSurface, borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`, boxShadow: shadow.lg, padding: space.lg }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+            <h2 style={{ margin: 0, color: color.textPrimary, fontSize: font.size.md, fontWeight: font.weight.semibold }}>Clipboard</h2>
+            <span style={{ color: color.textMuted, fontSize: font.size.xs }}>{clipboard.items.length} item{clipboard.items.length === 1 ? "" : "s"}</span>
           </div>
-
-          <div style={{ fontSize: "9px", color: color.textMuted, padding: "0 2px", lineHeight: 1.4 }}>
-            <strong style={{ color: color.textPrimary }}>Drag</strong> to paste · <strong style={{ color: color.textPrimary }}>click</strong> to copy
-          </div>
-
-          <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} loading={clipboard.loading} />
-        </div>
+          <p style={{ margin: `${space.xs}px 0 ${space.md}px`, color: color.textMuted, fontSize: font.size.xs, lineHeight: 1.45 }}>
+            Showing the last 7 days. <strong style={{ color: color.textSecondary }}>Drag</strong> an item onto a text box to paste it, or <strong style={{ color: color.textSecondary }}>click</strong> to copy again.
+          </p>
+          <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" loading={clipboard.loading} />
+        </section>
       )}
     </div>
   );
