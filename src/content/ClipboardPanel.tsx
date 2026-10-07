@@ -147,7 +147,7 @@ export function ClipboardList({
               event.dataTransfer.setData("text/plain", item.content);
               event.dataTransfer.effectAllowed = "copy";
             }}
-            title={`${item.itemType === "image" ? "Screenshot" : "Copied text"} — drag onto a text box to paste, or click to copy again`}
+            title={`${item.itemType === "image" ? "Screenshot" : "Copied text"}. Drag onto a text box to paste, or click to copy again`}
             style={{
               display: "flex",
               alignItems: "center",

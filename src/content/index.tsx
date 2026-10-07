@@ -646,7 +646,7 @@ function DecisionStrip({
           "success",
           contained
             ? `Saved to ${handle.name}`
-            : "Saved outside your BeHeld folder — one-time, not remembered"
+            : "Saved outside your BeHeld folder (one-time, not remembered)"
         );
         setBrowsing(false);
       }
@@ -708,7 +708,7 @@ function DecisionStrip({
         if (response?.success) {
           showConfirmation("success", "Saved to default folder");
         } else if (response?.noDefaultSet) {
-          showConfirmation("error", "No default folder set — choose one in Settings", 2500);
+          showConfirmation("error", "No default folder set. Choose one in Settings", 2500);
         } else {
           console.error("BeHeld: failed to save to default folder", chrome.runtime.lastError);
           showConfirmation("error", "Something went wrong");
@@ -825,12 +825,19 @@ function DecisionStrip({
       ) : (
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {state === "prompt" && (
-          // Stacked with the same top padding/gap as the icon rail's own buttons below,
-          // so each callout lines up with the icon it's explaining (folder, then copy)
-          // instead of needing hand-tuned pixel offsets to stay in sync with that rail.
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "10px 0", marginRight: "8px" }}>
-            {renderCalloutBubble("Save screenshot somewhere else?")}
-            {dataUrl && renderCalloutBubble("Copy only — nothing is saved")}
+          // Each row below is a 28px-tall slot with the same top padding/gap as the
+          // icon rail's own 28px buttons, so centering a bubble within its row (via
+          // alignItems: center) lines its triangle up with that icon's actual vertical
+          // center — the bubble's own (taller) height never pushes it off that mark.
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", paddingTop: "10px", marginRight: "8px" }}>
+            <div style={{ height: "28px", display: "flex", alignItems: "center" }}>
+              {renderCalloutBubble("Save screenshot somewhere else?")}
+            </div>
+            {dataUrl && (
+              <div style={{ height: "28px", display: "flex", alignItems: "center" }}>
+                {renderCalloutBubble("Copy only, nothing is saved")}
+              </div>
+            )}
           </div>
         )}
 
@@ -1014,7 +1021,7 @@ function DecisionStrip({
           </div>
 
           <div style={{ fontSize: "9px", color: color.textMuted, padding: "0 2px", lineHeight: 1.4 }}>
-            Drag to paste · click to copy
+            <strong style={{ color: color.textPrimary }}>Drag</strong> to paste · <strong style={{ color: color.textPrimary }}>click</strong> to copy
           </div>
 
           <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} loading={clipboard.loading} />

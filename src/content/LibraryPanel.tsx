@@ -450,7 +450,7 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
             {loadingFolder === folder && <div style={{ color: color.textMuted, fontSize: font.size.sm }}>Loading screenshots…</div>}
             {loadingFolder !== folder && contents?.permissionDenied && (
               <div style={{ color: color.warningText, fontSize: font.size.sm, lineHeight: 1.45 }}>
-                Permission needed — open the popup and re-select your screenshots folder.
+                Permission needed. Open the popup and re-select your screenshots folder.
               </div>
             )}
             {loadingFolder !== folder && !contents?.permissionDenied && (contents?.items.length ?? 0) === 0 && (
@@ -531,7 +531,7 @@ export function LibraryPanel({ folders }: { folders: string[] }) {
               <span style={{ color: color.textMuted, fontSize: font.size.xs }}>{clipboard.items.length} item{clipboard.items.length === 1 ? "" : "s"}</span>
             </div>
             <p style={{ margin: `${space.xs}px 0 ${space.md}px`, color: color.textMuted, fontSize: font.size.xs, lineHeight: 1.45 }}>
-              Showing the last 7 days. Drag an item onto a text box to paste it, or click to copy again.
+              Showing the last 7 days. <strong style={{ color: color.textPrimary }}>Drag</strong> an item onto a text box to paste it, or <strong style={{ color: color.textPrimary }}>click</strong> to copy again.
             </p>
             <ClipboardList items={clipboard.items} onDelete={clipboard.deleteItem} onRecopy={clipboard.recopy} maxHeight="60vh" loading={clipboard.loading} />
           </section>

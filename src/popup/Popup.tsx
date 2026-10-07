@@ -115,11 +115,6 @@ function Popup() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [defaultFolderHandle, setDefaultFolderHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [showDefaultFolderConfirmation, setShowDefaultFolderConfirmation] = useState(false);
-  // null = not loaded yet, "" = Chrome has no shortcut assigned at all (almost always
-  // because another extension's own shortcut already claimed the same key combo),
-  // otherwise the actual live-bound combo, which can differ from what manifest.json
-  // merely suggests.
-  const [shortcut, setShortcut] = useState<string | null>(null);
 
   useEffect(() => {
     get("beheld-root-handle").then((handle) => {
@@ -129,15 +124,7 @@ function Popup() {
     get("beheld-default-folder-handle").then((handle) => {
       setDefaultFolderHandle(handle ?? null);
     });
-    chrome.commands.getAll((commands) => {
-      const takeScreenshot = commands.find((c) => c.name === "take-screenshot");
-      setShortcut(takeScreenshot?.shortcut ?? "");
-    });
   }, []);
-
-  const handleOpenShortcutSettings = () => {
-    chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
-  };
 
   const handlePickFolder = async () => {
     try {
@@ -221,7 +208,7 @@ function Popup() {
             marginBottom: space.xl,
           }}
         >
-          Choose where BeHeld should save your screenshots. This is a one-time setup — you can change it later.
+          Choose where BeHeld should save your screenshots. This is a one-time setup, and you can change it later.
         </p>
         <Button variant="primary" fullWidth onClick={handlePickFolder}>
           Choose screenshots folder
@@ -231,7 +218,8 @@ function Popup() {
   }
 
   if (viewMode === "settings") {
-    const shortcutKeys = shortcut ? shortcut.split("+") : [];
+    const isMac = navigator.platform.includes("Mac");
+    const shortcutKeys = isMac ? ["⌘", "Shift", "S"] : ["Ctrl", "Shift", "S"];
 
     return (
       <div style={shellStyle}>
@@ -289,54 +277,31 @@ function Popup() {
         <Divider />
 
         <SectionLabel>Trigger a screenshot</SectionLabel>
-        {shortcut === "" ? (
-          <>
-            <Caption>
-              No shortcut is currently assigned. This almost always means another
-              extension's shortcut already claims the same key combo — Chrome only
-              lets one extension own a given combo at a time.
-            </Caption>
-            <div style={{ marginTop: space.sm }}>
-              <Button variant="secondary" size="sm" onClick={handleOpenShortcutSettings}>
-                Assign a shortcut
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-              {shortcutKeys.map((key, i) => (
-                <span key={i} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-                  <span
-                    style={{
-                      background: color.bgElevated,
-                      color: color.textPrimary,
-                      border: `1px solid ${color.border}`,
-                      borderRadius: radius.sm,
-                      padding: "4px 8px",
-                      fontSize: font.size.sm,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                    }}
-                  >
-                    {key}
-                  </span>
-                  {i < shortcutKeys.length - 1 && (
-                    <span style={{ fontSize: font.size.sm, color: color.textMuted }}>+</span>
-                  )}
-                </span>
-              ))}
-            </div>
-            <Caption>
-              Press this anywhere in Chrome to capture the current tab instantly, without
-              opening the popup. If it ever stops firing (or triggers something else
-              instead), another extension has likely taken the same combo —{" "}
-              <button className="bh-link-button" onClick={handleOpenShortcutSettings} style={{ fontSize: "inherit" }}>
-                check chrome://extensions/shortcuts
-              </button>
-              .
-            </Caption>
-          </>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+          {shortcutKeys.map((key, i) => (
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+              <span
+                style={{
+                  background: color.bgElevated,
+                  color: color.textPrimary,
+                  border: `1px solid ${color.border}`,
+                  borderRadius: radius.sm,
+                  padding: "4px 8px",
+                  fontSize: font.size.sm,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                }}
+              >
+                {key}
+              </span>
+              {i < shortcutKeys.length - 1 && (
+                <span style={{ fontSize: font.size.sm, color: color.textMuted }}>+</span>
+              )}
+            </span>
+          ))}
+        </div>
+        <Caption>
+          Press this anywhere in Chrome to capture the current tab instantly, without opening the popup.
+        </Caption>
       </div>
     );
   }
@@ -376,36 +341,17 @@ function Popup() {
       <Button variant="primary" fullWidth icon={<IconCamera size={16} />} onClick={handleCapture}>
         Take screenshot
       </Button>
-      {shortcut ? (
-        <p
-          style={{
-            fontSize: font.size.xs,
-            color: color.textMuted,
-            margin: 0,
-            marginTop: space.sm,
-            marginBottom: space.lg,
-          }}
-        >
-          or press {shortcut} anywhere
-        </p>
-      ) : shortcut === "" ? (
-        <p
-          style={{
-            fontSize: font.size.xs,
-            color: color.textMuted,
-            margin: 0,
-            marginTop: space.sm,
-            marginBottom: space.lg,
-          }}
-        >
-          No keyboard shortcut assigned —{" "}
-          <button className="bh-link-button" onClick={() => setViewMode("settings")} style={{ fontSize: "inherit" }}>
-            fix this in Settings
-          </button>
-        </p>
-      ) : (
-        <div style={{ marginBottom: space.lg }} />
-      )}
+      <p
+        style={{
+          fontSize: font.size.xs,
+          color: color.textMuted,
+          margin: 0,
+          marginTop: space.sm,
+          marginBottom: space.lg,
+        }}
+      >
+        or press {navigator.platform.includes("Mac") ? "⌘+Shift+S" : "Ctrl+Shift+S"} anywhere
+      </p>
 
       <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
         <Button variant="secondary" fullWidth icon={<IconFullPage size={16} />} onClick={handleCaptureFullPage}>
