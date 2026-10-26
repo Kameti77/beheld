@@ -1102,8 +1102,8 @@ function showCaptureFlash() {
 // script drives the scrolling/layout side (it can read and change the page) while
 // repeatedly asking the service worker for a pixel capture of whatever is currently
 // visible, then stitches the results into one tall image client-side.
-const FULL_PAGE_MAX_SLICES = 20;
-const FULL_PAGE_SETTLE_DELAY_MS = 120;
+const FULL_PAGE_MAX_SLICES = 60;
+const FULL_PAGE_SETTLE_DELAY_MS = 150;
 
 function waitForPaint(): Promise<void> {
   return new Promise((resolve) => {
@@ -1143,22 +1143,86 @@ function captureSliceFromServiceWorker(): Promise<string | null> {
   });
 }
 
+// Chrome refuses canvases taller than 32,767px or much larger than ~268M pixels, so a
+// very long page is scaled down to fit rather than failing to stitch at all.
+const CANVAS_MAX_DIMENSION = 32000;
+const CANVAS_MAX_AREA = 200_000_000;
+
+function scrollToInstant(el: HTMLElement, top: number) {
+  // "instant" overrides a page's CSS scroll-behavior: smooth, which would otherwise
+  // still be animating when the slice is captured and put it in the wrong place.
+  el.scrollTo({ top, left: el.scrollLeft, behavior: "instant" as ScrollBehavior });
+}
+
+interface ScrollTarget {
+  el: HTMLElement;
+  // The visible area of the scroller, in CSS pixels relative to the viewport.
+  region: { x: number; y: number; width: number; height: number };
+}
+
+// Most articles and blogs scroll the whole document, but many web apps (Gmail, Notion,
+// dashboards, chat apps) lock the document and scroll an inner panel instead. Scrolling
+// the window does nothing there, which is why full-page capture used to return a
+// single screen on those sites. This finds whichever element really scrolls.
+function findScrollTarget(): ScrollTarget {
+  const docEl = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  const viewport = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+  const docOverflow = window.getComputedStyle(docEl).overflowY;
+  const bodyOverflow = window.getComputedStyle(document.body).overflowY;
+  const docLocked = docOverflow === "hidden" || docOverflow === "clip" || bodyOverflow === "hidden" || bodyOverflow === "clip";
+  const docScrollableBy = docEl.scrollHeight - window.innerHeight;
+
+  if (!docLocked && docScrollableBy > 50) return { el: docEl, region: viewport };
+
+  let best: { el: HTMLElement; area: number } | null = null;
+  document.querySelectorAll<HTMLElement>("body *").forEach((el) => {
+    if (el.scrollHeight - el.clientHeight < 50) return;
+    const overflowY = window.getComputedStyle(el).overflowY;
+    if (overflowY !== "auto" && overflowY !== "scroll" && overflowY !== "overlay") return;
+    const rect = el.getBoundingClientRect();
+    const visibleWidth = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+    const visibleHeight = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
+    // Ignore small scrollers like dropdowns, code blocks and sidebars.
+    if (visibleWidth < window.innerWidth * 0.3 || visibleHeight < window.innerHeight * 0.4) return;
+    const area = visibleWidth * visibleHeight;
+    if (!best || area > best.area) best = { el, area };
+  });
+
+  const found = best as { el: HTMLElement; area: number } | null;
+  if (!found) return { el: docEl, region: viewport };
+
+  const rect = found.el.getBoundingClientRect();
+  const top = Math.max(rect.top + found.el.clientTop, 0);
+  const left = Math.max(rect.left, 0);
+  return {
+    el: found.el,
+    region: {
+      x: left,
+      y: top,
+      width: Math.min(rect.right, window.innerWidth) - left,
+      height: Math.min(found.el.clientHeight, window.innerHeight - top),
+    },
+  };
+}
+
 async function runFullPageCapture() {
   showCaptureFlash();
 
-  const originalScrollX = window.scrollX;
-  const originalScrollY = window.scrollY;
+  const { el: scroller, region } = findScrollTarget();
+  const originalScrollTop = scroller.scrollTop;
+  const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
 
   // Fixed/sticky elements (sticky headers, navs, cookie banners, ...) would otherwise
-  // repeat in every slice — this is a best-effort heuristic based on computed position
-  // alone, so not every site's sticky UI will be caught by it.
+  // repeat in every slice. They stay visible in the first slice, so the top of the
+  // page looks the way it really does, and are hidden for every slice after that.
+  // This is a best-effort heuristic based on computed position alone, so not every
+  // site's sticky UI will be caught by it.
   const stickyElements: { el: HTMLElement; originalVisibility: string }[] = [];
   document.querySelectorAll<HTMLElement>("body *").forEach((el) => {
     const position = window.getComputedStyle(el).position;
     if (position === "fixed" || position === "sticky") {
       stickyElements.push({ el, originalVisibility: el.style.visibility });
-      el.style.visibility = "hidden";
     }
   });
 
@@ -1167,41 +1231,42 @@ async function runFullPageCapture() {
   const hadBeheldUI = setBeheldUIHidden(true);
   if (hadBeheldUI) await waitForPaint();
 
-  const captures: { dataUrl: string; scrollY: number }[] = [];
+  const captures: { dataUrl: string; scrollTop: number }[] = [];
 
   try {
-    let lastScrollY = -1;
-    let lastMeasuredHeight = document.documentElement.scrollHeight;
+    let lastScrollTop = -1;
 
     for (let i = 0; i < FULL_PAGE_MAX_SLICES; i++) {
-      const targetY = i * viewportHeight;
-      window.scrollTo(0, targetY);
+      if (i === 1) {
+        stickyElements.forEach(({ el }) => {
+          el.style.visibility = "hidden";
+        });
+      }
+
+      scrollToInstant(scroller, i * region.height);
       await waitForPaint();
       await delay(FULL_PAGE_SETTLE_DELAY_MS);
 
       // Browsers clamp scroll position near the bottom of the page, so the achieved
       // position (not the requested target) is what actually determines where this
       // slice belongs in the stitched image.
-      const achievedY = window.scrollY;
-      if (achievedY === lastScrollY) break;
-
-      const currentHeight = document.documentElement.scrollHeight;
-      if (currentHeight < lastMeasuredHeight) break; // page height shrank unexpectedly mid-capture
+      const achievedTop = scroller.scrollTop;
+      if (achievedTop === lastScrollTop) break;
 
       const dataUrl = await captureSliceFromServiceWorker();
       if (!dataUrl) break;
 
-      captures.push({ dataUrl, scrollY: achievedY });
-      lastScrollY = achievedY;
-      lastMeasuredHeight = currentHeight;
+      captures.push({ dataUrl, scrollTop: achievedTop });
+      lastScrollTop = achievedTop;
 
-      if (achievedY + viewportHeight >= currentHeight) break; // bottom reached
+      // Re-measured every slice, since lazy-loaded content can make the page grow.
+      if (achievedTop + region.height >= scroller.scrollHeight - 1) break; // bottom reached
     }
   } finally {
     stickyElements.forEach(({ el, originalVisibility }) => {
       el.style.visibility = originalVisibility;
     });
-    window.scrollTo(originalScrollX, originalScrollY);
+    scrollToInstant(scroller, originalScrollTop);
     if (hadBeheldUI) setBeheldUIHidden(false);
   }
 
@@ -1209,25 +1274,55 @@ async function runFullPageCapture() {
 
   const images = await Promise.all(captures.map((c) => loadImage(c.dataUrl)));
   // All slices are captured at the same viewport size/DPI, so the first image's own
-  // pixel-per-CSS-pixel ratio applies uniformly to every slice's recorded scrollY.
+  // pixel-per-CSS-pixel ratio applies uniformly to every slice.
   const scale = images[0].naturalHeight / viewportHeight;
-  const canvasWidth = images[0].naturalWidth;
-  const totalCssHeight = Math.max(...captures.map((c) => c.scrollY + viewportHeight));
-  const canvasHeight = Math.round(totalCssHeight * scale);
+
+  // The stitched image is: everything above the scroller (from the first slice), the
+  // scroller's full content, then everything below it (from the last slice). For a
+  // normal page the scroller is the whole viewport, so there is nothing above or below.
+  const lastCapture = captures[captures.length - 1];
+  const contentHeight = lastCapture.scrollTop + region.height;
+  const regionBottom = region.y + region.height;
+  const totalCssHeight = region.y + contentHeight + (viewportHeight - regionBottom);
+
+  const fullWidth = viewportWidth * scale;
+  const fullHeight = totalCssHeight * scale;
+  const outputScale = Math.min(
+    1,
+    CANVAS_MAX_DIMENSION / fullHeight,
+    Math.sqrt(CANVAS_MAX_AREA / (fullWidth * fullHeight))
+  );
 
   const canvas = document.createElement("canvas");
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
+  canvas.width = Math.round(fullWidth * outputScale);
+  canvas.height = Math.round(fullHeight * outputScale);
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     console.error("BeHeld: canvas context unavailable for full-page stitch");
     return;
   }
 
+  // Areas beside an inner scroller (a fixed sidebar, say) only exist in the first
+  // screen, so the extra height below them is filled with the page's background.
+  const bodyBackground = window.getComputedStyle(document.body).backgroundColor;
+  ctx.fillStyle = bodyBackground && bodyBackground !== "rgba(0, 0, 0, 0)" ? bodyBackground : "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Copies a rectangle (in CSS pixels) from a slice to a spot on the output canvas.
+  const drawPart = (img: HTMLImageElement, sx: number, sy: number, sw: number, sh: number, dy: number) => {
+    if (sw <= 0 || sh <= 0) return;
+    ctx.drawImage(
+      img,
+      sx * scale, sy * scale, sw * scale, sh * scale,
+      sx * scale * outputScale, dy * scale * outputScale, sw * scale * outputScale, sh * scale * outputScale
+    );
+  };
+
+  drawPart(images[0], 0, 0, viewportWidth, regionBottom, 0);
   captures.forEach((capture, index) => {
-    const destY = Math.round(capture.scrollY * scale);
-    ctx.drawImage(images[index], 0, destY);
+    drawPart(images[index], region.x, region.y, region.width, region.height, region.y + capture.scrollTop);
   });
+  drawPart(images[images.length - 1], 0, regionBottom, viewportWidth, viewportHeight - regionBottom, region.y + contentHeight);
 
   const stitchedDataUrl = canvas.toDataURL("image/png");
   chrome.runtime.sendMessage({ type: "FULL_PAGE_CAPTURE_COMPLETE", dataUrl: stitchedDataUrl });
