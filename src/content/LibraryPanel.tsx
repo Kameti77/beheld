@@ -113,6 +113,29 @@ function FolderThumbnail({
           </button>
         )}
       </div>
+      {!isRenaming && (
+        <div
+          className="bh-rename-target"
+          onClick={onRenameClick}
+          title={`${item.filename} (click to rename)`}
+          style={{
+            marginTop: 4,
+            padding: "1px 2px",
+            color: color.textSecondary,
+            fontSize: 10,
+            lineHeight: 1.3,
+            textAlign: "center",
+            wordBreak: "break-all",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            cursor: "text",
+          }}
+        >
+          {item.filename.replace(/\.png$/i, "")}
+        </div>
+      )}
       {isConfirming && (
         <div style={{ marginTop: space.xs, color: color.textSecondary, fontSize: font.size.xs, lineHeight: 1.35, textAlign: "center" }}>
           Delete this?
