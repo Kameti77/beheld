@@ -127,32 +127,41 @@ function setBeheldUIHiddenOnTab(tabId: number, hidden: boolean): Promise<void> {
   });
 }
 
-async function captureAndShowStrip(): Promise<boolean> {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const activeTab = tabs[0];
-  if (!activeTab?.id) {
-    return false;
+// Pressing the shortcut again while a capture is still in progress would start a
+// second captureVisibleTab call that Chrome's rate limit rejects, so overlapping
+// requests are ignored until the current one finishes.
+let captureInProgress = false;
+
+async function captureAndShowStrip(commandTab?: chrome.tabs.Tab): Promise<boolean> {
+  if (captureInProgress) return false;
+  captureInProgress = true;
+
+  try {
+    // The keyboard command hands over the exact tab it fired on. Querying
+    // "currentWindow" from the service worker can pick the wrong window (for
+    // example, a DevTools or popup window), so that tab is preferred when known.
+    let activeTab = commandTab;
+    if (!activeTab?.id) {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      activeTab = tabs[0];
+    }
+    if (!activeTab?.id) {
+      return false;
+    }
+
+    await setBeheldUIHiddenOnTab(activeTab.id, true);
+    let { dataUrl } = await captureSlice(activeTab.windowId);
+    // One retry covers a transient failure, such as the tab still finishing a
+    // repaint or another extension having just used up the capture rate limit.
+    if (!dataUrl) ({ dataUrl } = await captureSlice(activeTab.windowId));
+    await setBeheldUIHiddenOnTab(activeTab.id, false);
+
+    if (!dataUrl) return false;
+
+    return await finishCaptureAndShowStrip(dataUrl, activeTab.id);
+  } finally {
+    captureInProgress = false;
   }
-
-  await setBeheldUIHiddenOnTab(activeTab.id, true);
-
-  const { dataUrl, captureError } = await new Promise<{
-    dataUrl: string | undefined;
-    captureError: chrome.runtime.LastError | undefined;
-  }>((resolve) => {
-    chrome.tabs.captureVisibleTab({ format: "png" }, (result) => {
-      resolve({ dataUrl: result, captureError: chrome.runtime.lastError });
-    });
-  });
-
-  await setBeheldUIHiddenOnTab(activeTab.id, false);
-
-  if (captureError || !dataUrl) {
-    console.error("BeHeld: capture failed", captureError);
-    return false;
-  }
-
-  return finishCaptureAndShowStrip(dataUrl, activeTab.id);
 }
 
 // chrome.tabs.captureVisibleTab is rate-limited to roughly two calls per second. A
@@ -184,9 +193,9 @@ async function captureSlice(windowId?: number): Promise<{ dataUrl?: string }> {
   });
 }
 
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "take-screenshot") {
-    captureAndShowStrip();
+    captureAndShowStrip(tab);
   }
 });
 
