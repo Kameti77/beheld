@@ -130,6 +130,7 @@ function Popup() {
     try {
       const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
       await set("beheld-root-handle", handle);
+      await set("beheld-folders", ["Temp"]);
       setRootHandle(handle);
       setIsReady(true);
     } catch {
@@ -141,6 +142,9 @@ function Popup() {
     try {
       const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
       await set("beheld-root-handle", handle);
+      // The old root's folder names don't apply here; the list is rebuilt from the
+      // new root's real subfolders the next time the strip or Library asks for it.
+      await set("beheld-folders", ["Temp"]);
       setRootHandle(handle);
       setShowConfirmation(true);
       setTimeout(() => setShowConfirmation(false), 1500);

@@ -29,8 +29,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "GET_FOLDERS") {
-    get<string[]>("beheld-folders").then((folders) => {
-      sendResponse({ folders: folders ?? ["Temp"] });
+    listFoldersUnderRoot().then((folders) => {
+      sendResponse({ folders });
     });
     return true;
   }
@@ -126,6 +126,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 });
+
+// The folder list always reflects the subfolders that actually exist inside the
+// current root on disk, so switching the root folder in Settings never carries over
+// folder names from the previous root. Temp is always offered, even before it exists.
+// The stored list is only a fallback for when the root can't be read right now.
+async function listFoldersUnderRoot(): Promise<string[]> {
+  try {
+    const rootHandle = await get<FileSystemDirectoryHandle>("beheld-root-handle");
+    if (!rootHandle) return ["Temp"];
+
+    const permission = await (rootHandle as unknown as {
+      requestPermission: (desc: { mode: string }) => Promise<string>;
+    }).requestPermission({ mode: "readwrite" });
+
+    if (permission !== "granted") {
+      return (await get<string[]>("beheld-folders")) ?? ["Temp"];
+    }
+
+    const names: string[] = [];
+    for await (const [name, handle] of rootHandle.entries()) {
+      // Hidden system folders (.git, .DS_Store-style dot folders) aren't screenshot folders.
+      if (handle.kind === "directory" && !name.startsWith(".") && name !== "Temp") names.push(name);
+    }
+    names.sort((a, b) => a.localeCompare(b));
+
+    const folders = ["Temp", ...names];
+    await set("beheld-folders", folders);
+    return folders;
+  } catch (error) {
+    console.error("Offscreen list folders error:", error);
+    return (await get<string[]>("beheld-folders")) ?? ["Temp"];
+  }
+}
 
 async function handleSave(folderName: string, dataUrl: string): Promise<boolean> {
   try {
